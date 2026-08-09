@@ -1,0 +1,197 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 20% 4%;
+    --foreground: 190 100% 90%;
+
+    --card: 210 30% 8%;
+    --card-foreground: 190 100% 90%;
+
+    --popover: 210 30% 8%;
+    --popover-foreground: 190 100% 90%;
+
+    --primary: 190 100% 50%;
+    --primary-foreground: 220 20% 4%;
+
+    --secondary: 210 30% 12%;
+    --secondary-foreground: 190 100% 85%;
+
+    --muted: 210 20% 14%;
+    --muted-foreground: 200 30% 55%;
+
+    --accent: 260 80% 60%;
+    --accent-foreground: 260 100% 95%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 190 60% 20%;
+    --input: 210 30% 15%;
+    --ring: 190 100% 50%;
+
+    --radius: 0.75rem;
+
+    /* Custom JARVIS tokens */
+    --jarvis-cyan: 190 100% 50%;
+    --jarvis-blue: 210 100% 55%;
+    --jarvis-purple: 260 80% 60%;
+    --jarvis-teal: 175 80% 45%;
+    --jarvis-glow: 190 100% 50%;
+    --jarvis-dark: 220 25% 6%;
+    --jarvis-panel: 210 30% 8%;
+
+    --glow-cyan: 0 0 20px hsl(190 100% 50% / 0.4), 0 0 40px hsl(190 100% 50% / 0.2);
+    --glow-purple: 0 0 20px hsl(260 80% 60% / 0.4), 0 0 40px hsl(260 80% 60% / 0.2);
+    --glow-border: 0 0 8px hsl(190 100% 50% / 0.3);
+
+    --glass-bg: hsla(210, 30%, 8%, 0.6);
+    --glass-border: hsla(190, 100%, 50%, 0.15);
+    --glass-highlight: hsla(190, 100%, 50%, 0.05);
+
+    --sidebar-background: 220 25% 6%;
+    --sidebar-foreground: 190 100% 85%;
+    --sidebar-primary: 190 100% 50%;
+    --sidebar-primary-foreground: 220 20% 4%;
+    --sidebar-accent: 210 30% 12%;
+    --sidebar-accent-foreground: 190 100% 85%;
+    --sidebar-border: 190 60% 20%;
+    --sidebar-ring: 190 100% 50%;
+
+    font-family: 'Rajdhani', sans-serif;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    background-image: 
+      radial-gradient(ellipse at 20% 50%, hsla(190, 100%, 50%, 0.03) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, hsla(260, 80%, 60%, 0.03) 0%, transparent 50%);
+  }
+}
+
+@layer components {
+  .glass-panel {
+    @apply relative overflow-hidden rounded-xl;
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+  }
+
+  .glass-panel::before {
+    content: '';
+    @apply absolute inset-0 rounded-xl pointer-events-none;
+    background: linear-gradient(135deg, var(--glass-highlight) 0%, transparent 50%);
+  }
+
+  .glow-border {
+    box-shadow: var(--glow-border);
+  }
+
+  .glow-cyan {
+    box-shadow: var(--glow-cyan);
+  }
+
+  .glow-purple {
+    box-shadow: var(--glow-purple);
+  }
+
+  .glow-text {
+    text-shadow: 0 0 10px hsl(190 100% 50% / 0.5), 0 0 30px hsl(190 100% 50% / 0.2);
+  }
+
+  .glow-text-purple {
+    text-shadow: 0 0 10px hsl(260 80% 60% / 0.5), 0 0 30px hsl(260 80% 60% / 0.2);
+  }
+
+  .font-display {
+    font-family: 'Orbitron', sans-serif;
+  }
+
+  .font-mono-tech {
+    font-family: 'Share Tech Mono', monospace;
+  }
+
+  .holographic-line {
+    @apply h-px w-full;
+    background: linear-gradient(90deg, transparent, hsl(var(--jarvis-cyan)), transparent);
+  }
+
+  .holographic-line-vertical {
+    @apply w-px h-full;
+    background: linear-gradient(180deg, transparent, hsl(var(--jarvis-cyan)), transparent);
+  }
+
+  .floating-card {
+    @apply glass-panel p-6 glow-border transition-all duration-300;
+  }
+
+  .floating-card:hover {
+    box-shadow: var(--glow-cyan);
+    border-color: hsl(var(--jarvis-cyan) / 0.3);
+    transform: translateY(-2px);
+  }
+
+  .scan-line {
+    @apply absolute left-0 right-0 h-px opacity-30 pointer-events-none;
+    background: linear-gradient(90deg, transparent, hsl(var(--jarvis-cyan)), transparent);
+    animation: scan 4s linear infinite;
+  }
+
+  .hex-grid-bg {
+    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 5 L55 20 L55 40 L30 55 L5 40 L5 20 Z' fill='none' stroke='%2300bcd440' stroke-width='0.5'/%3E%3C/svg%3E");
+    background-size: 60px 60px;
+  }
+}
+
+@keyframes scan {
+  0% { top: 0%; }
+  100% { top: 100%; }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes rotate-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes data-flow {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+.animate-rotate-slow {
+  animation: rotate-slow 20s linear infinite;
+}
+
+.animate-data-flow {
+  background-size: 200% 100%;
+  animation: data-flow 3s linear infinite;
+}
