@@ -1,61 +1,53 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import DashboardPage from "./pages/DashboardPage";
-
+import ConfirmationDialog from "@/components/hud/ConfirmationDialog";
 import JarvisNavbar from "@/components/JarvisNavbar";
 import JarvisOverlay from "@/components/JarvisOverlay";
+import { AssistantProvider } from "@/features/assistant/AssistantProvider";
+import { useAssistant } from "@/features/assistant/context";
 
-import StartupPage from "./pages/StartupPage";
-import Index from "./pages/Index";
-import AssistantPage from "./pages/AssistantPage";
-import NotesPage from "./pages/NotesPage";
-import CalendarPage from "./pages/CalendarPage";
-import TasksPage from "./pages/TasksPage";
 import AboutPage from "./pages/AboutPage";
+import AssistantPage from "./pages/AssistantPage";
+import CalendarPage from "./pages/CalendarPage";
+import Index from "./pages/Index";
+import NotesPage from "./pages/NotesPage";
 import NotFound from "./pages/NotFound";
+import StartupPage from "./pages/StartupPage";
+import TasksPage from "./pages/TasksPage";
 
-const queryClient = new QueryClient();
+/** Confirmations can arrive from any page (voice works everywhere), so the dialog is global. */
+const GlobalConfirmation = () => {
+  const { state, decide } = useAssistant();
+  return <ConfirmationDialog confirmation={state.confirmation} onDecide={(d) => void decide(d)} />;
+};
 
 const App = () => (
-  <QueryClientProvider client={queryClient}>
-    <TooltipProvider>
-      <Toaster />
-      <Sonner />
-
-      <BrowserRouter>
-
-        {/* floating jarvis */}
-        <JarvisOverlay />
-
-        {/* navbar */}
+  <TooltipProvider>
+    <Toaster />
+    <Sonner />
+    <BrowserRouter>
+      <AssistantProvider>
         <JarvisNavbar />
-
-        <Routes>
-
-          {/* boot */}
-          <Route path="/startup" element={<StartupPage />} />
-
-          {/* dashboard */}
-          <Route path="/" element={<Index />} />
-
-          {/* pages */}
-          <Route path="/assistant" element={<AssistantPage />} />
-          <Route path="/notes" element={<NotesPage />} />
-          <Route path="/calendar" element={<CalendarPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/about" element={<AboutPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-
-          <Route path="*" element={<NotFound />} />
-
-        </Routes>
-
-      </BrowserRouter>
-    </TooltipProvider>
-  </QueryClientProvider>
+        <main>
+          <Routes>
+            <Route path="/startup" element={<StartupPage />} />
+            <Route path="/" element={<Index />} />
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/assistant" element={<AssistantPage />} />
+            <Route path="/notes" element={<NotesPage />} />
+            <Route path="/calendar" element={<CalendarPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/about" element={<AboutPage />} />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </main>
+        <JarvisOverlay />
+        <GlobalConfirmation />
+      </AssistantProvider>
+    </BrowserRouter>
+  </TooltipProvider>
 );
 
 export default App;

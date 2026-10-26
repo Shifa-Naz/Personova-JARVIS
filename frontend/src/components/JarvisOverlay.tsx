@@ -1,116 +1,34 @@
-import { useEffect, useState } from "react";
-import JarvisAvatar from "@/components/JarvisAvatar";
+import { useLocation } from "react-router-dom";
+import CoreVisualizer from "@/components/hud/CoreVisualizer";
+import { useAssistant } from "@/features/assistant/context";
+import { PHASES } from "@/features/assistant/phase";
 
+/** A small core in the corner of the Tasks, Calendar, Notes and About pages: click it (or press Space) to talk. */
 const JarvisOverlay = () => {
+  const { state, levelRef, toggleListening, activeStt } = useAssistant();
+  const location = useLocation();
 
-  const [time, setTime] = useState("");
-  const [date, setDate] = useState("");
-  const [pulse, setPulse] = useState(false);
-
-  useEffect(() => {
-
-    const update = () => {
-
-      const now = new Date();
-
-      setTime(now.toLocaleTimeString());
-      setDate(now.toDateString());
-
-    };
-
-    update();
-
-    const t = setInterval(update, 1000);
-
-    const p = setInterval(() => {
-      setPulse(v => !v);
-    }, 700);
-
-    const speech =
-      new SpeechSynthesisUtterance(
-        "Welcome back sir. All systems online."
-      );
-
-    window.speechSynthesis.speak(speech);
-
-    return () => {
-      clearInterval(t);
-      clearInterval(p);
-    };
-
-  }, []);
+  if (["/", "/assistant", "/startup"].includes(location.pathname)) return null;
+  const lastReply = [...state.messages].reverse().find((m) => m.role === "jarvis");
+  const active = !["IDLE", "OFFLINE"].includes(state.phase);
 
   return (
-
-    <div
-      style={{
-        position: "fixed",
-        bottom: 0,
-        right: 40,
-        zIndex: 9999,
-        pointerEvents: "none",
-        textAlign: "center",
-      }}
-    >
-
-      {/* hologram glow */}
-
-      <div
-        style={{
-          transform: pulse
-            ? "scale(1.05)"
-            : "scale(1)",
-
-          transition: "0.4s",
-
-          filter:
-            "drop-shadow(0 0 25px cyan)",
-
-          animation:
-            "float 4s ease-in-out infinite",
-        }}
+    <div className="fixed bottom-4 right-4 z-40 flex items-end gap-3">
+      {state.phase === "SPEAKING" && lastReply && (
+        <p className="panel hidden max-w-xs px-4 py-3 text-sm text-foreground shadow-2xl sm:block">{lastReply.text.slice(0, 220)}</p>
+      )}
+      <button
+        type="button"
+        onClick={toggleListening}
+        disabled={!activeStt || !state.connected}
+        aria-label={state.phase === "LISTENING" ? "Stop listening" : "Talk to JARVIS"}
+        title={PHASES[state.phase].label}
+        className="rounded-full border border-border bg-card/90 p-1 shadow-xl backdrop-blur disabled:cursor-not-allowed disabled:opacity-60"
       >
-
-        <JarvisAvatar
-          size="lg"
-          speaking={pulse}
-        />
-
-      </div>
-
-
-      {/* time */}
-
-      <div
-        style={{
-          color: "cyan",
-          fontFamily: "monospace",
-          fontSize: 12,
-          marginTop: -10,
-          textShadow:
-            "0 0 10px cyan",
-        }}
-      >
-        {time}
-      </div>
-
-
-      {/* date */}
-
-      <div
-        style={{
-          color: "white",
-          fontSize: 10,
-          opacity: 0.7,
-        }}
-      >
-        {date}
-      </div>
-
+        <CoreVisualizer phase={state.phase} levelRef={levelRef} size={active ? 76 : 60} />
+      </button>
     </div>
-
   );
-
 };
 
 export default JarvisOverlay;

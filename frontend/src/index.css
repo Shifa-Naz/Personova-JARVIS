@@ -1,197 +1,197 @@
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&family=Rajdhani:wght@300;400;500;600;700&family=Share+Tech+Mono&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * JARVIS — "bridge console" palette (HSL triplets for Tailwind/shadcn).
+ *   Abyss  #0A1220  page        Hull   #111B2B  panels      Seam  #223349  hairlines
+ *   Frost  #E8F0F8  text        Mist   #8DA2BA  secondary text
+ *   Ice    #9BE7FF  JARVIS, voice, primary controls
+ *   Ember  #FFB547  actions JARVIS performs on the computer, plans, confirmations
+ *   Signal #FF5C5C  destructive / errors      Moss #5BE49B  success
+ */
 @layer base {
   :root {
-    --background: 220 20% 4%;
-    --foreground: 190 100% 90%;
+    --background: 217 52% 8%;
+    --foreground: 210 56% 94%;
+    --card: 216 44% 12%;
+    --card-foreground: 210 56% 94%;
+    --popover: 216 44% 12%;
+    --popover-foreground: 210 56% 94%;
+    --primary: 194 100% 80%;
+    --primary-foreground: 217 52% 8%;
+    --secondary: 214 41% 15%;
+    --secondary-foreground: 210 56% 94%;
+    --muted: 214 41% 15%;
+    --muted-foreground: 212 23% 64%;
+    --accent: 36 100% 64%;
+    --accent-foreground: 217 52% 8%;
+    --destructive: 0 100% 68%;
+    --destructive-foreground: 217 52% 8%;
+    --border: 214 36% 21%;
+    --input: 214 36% 21%;
+    --ring: 194 100% 80%;
+    --radius: 0.625rem;
 
-    --card: 210 30% 8%;
-    --card-foreground: 190 100% 90%;
+    /* semantic JARVIS tokens (names kept from earlier code) */
+    --jarvis-cyan: 194 100% 80%; /* ice */
+    --jarvis-amber: 36 100% 64%; /* ember */
+    --jarvis-red: 0 100% 68%;
+    --jarvis-green: 148 71% 62%;
+    --jarvis-violet: 253 100% 82%;
+    --jarvis-teal: 172 55% 62%;
+    --jarvis-grey: 212 15% 45%;
+    --jarvis-blue: 214 90% 70%;
+    --jarvis-purple: 253 60% 75%;
+    --jarvis-dark: 217 52% 8%;
+    --jarvis-panel: 216 44% 12%;
+    --jarvis-raised: 214 41% 15%;
 
-    --popover: 210 30% 8%;
-    --popover-foreground: 190 100% 90%;
-
-    --primary: 190 100% 50%;
-    --primary-foreground: 220 20% 4%;
-
-    --secondary: 210 30% 12%;
-    --secondary-foreground: 190 100% 85%;
-
-    --muted: 210 20% 14%;
-    --muted-foreground: 200 30% 55%;
-
-    --accent: 260 80% 60%;
-    --accent-foreground: 260 100% 95%;
-
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 0 0% 100%;
-
-    --border: 190 60% 20%;
-    --input: 210 30% 15%;
-    --ring: 190 100% 50%;
-
-    --radius: 0.75rem;
-
-    /* Custom JARVIS tokens */
-    --jarvis-cyan: 190 100% 50%;
-    --jarvis-blue: 210 100% 55%;
-    --jarvis-purple: 260 80% 60%;
-    --jarvis-teal: 175 80% 45%;
-    --jarvis-glow: 190 100% 50%;
-    --jarvis-dark: 220 25% 6%;
-    --jarvis-panel: 210 30% 8%;
-
-    --glow-cyan: 0 0 20px hsl(190 100% 50% / 0.4), 0 0 40px hsl(190 100% 50% / 0.2);
-    --glow-purple: 0 0 20px hsl(260 80% 60% / 0.4), 0 0 40px hsl(260 80% 60% / 0.2);
-    --glow-border: 0 0 8px hsl(190 100% 50% / 0.3);
-
-    --glass-bg: hsla(210, 30%, 8%, 0.6);
-    --glass-border: hsla(190, 100%, 50%, 0.15);
-    --glass-highlight: hsla(190, 100%, 50%, 0.05);
-
-    --sidebar-background: 220 25% 6%;
-    --sidebar-foreground: 190 100% 85%;
-    --sidebar-primary: 190 100% 50%;
-    --sidebar-primary-foreground: 220 20% 4%;
-    --sidebar-accent: 210 30% 12%;
-    --sidebar-accent-foreground: 190 100% 85%;
-    --sidebar-border: 190 60% 20%;
-    --sidebar-ring: 190 100% 50%;
-
-    font-family: 'Rajdhani', sans-serif;
+    --sidebar-background: 217 52% 8%;
+    --sidebar-foreground: 210 56% 94%;
+    --sidebar-primary: 194 100% 80%;
+    --sidebar-primary-foreground: 217 52% 8%;
+    --sidebar-accent: 214 41% 15%;
+    --sidebar-accent-foreground: 210 56% 94%;
+    --sidebar-border: 214 36% 21%;
+    --sidebar-ring: 194 100% 80%;
   }
-}
 
-@layer base {
   * {
     @apply border-border;
   }
 
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
-    @apply bg-background text-foreground antialiased;
-    background-image: 
-      radial-gradient(ellipse at 20% 50%, hsla(190, 100%, 50%, 0.03) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 20%, hsla(260, 80%, 60%, 0.03) 0%, transparent 50%);
+    @apply bg-background font-sans text-foreground antialiased;
+    font-size: 16px;
+    line-height: 1.6;
+    font-feature-settings: "ss01", "calt";
+  }
+
+  /* A faint engineering grid that fades out below the fold: the "bridge" surface. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.35) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.35) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 90% 60% at 50% 0%, black 30%, transparent 80%);
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.3);
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  h1,
+  h2,
+  h3 {
+    @apply font-display;
+    letter-spacing: 0.01em;
   }
 }
 
 @layer components {
-  .glass-panel {
-    @apply relative overflow-hidden rounded-xl;
-    background: var(--glass-bg);
-    border: 1px solid var(--glass-border);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
+  /* Flat instrument panel: one surface, one hairline. No glow, no hover lift. */
+  .panel {
+    @apply rounded-xl border border-border bg-card;
   }
 
-  .glass-panel::before {
-    content: '';
-    @apply absolute inset-0 rounded-xl pointer-events-none;
-    background: linear-gradient(135deg, var(--glass-highlight) 0%, transparent 50%);
+  .tabular {
+    font-variant-numeric: tabular-nums;
   }
 
-  .glow-border {
-    box-shadow: var(--glow-border);
+  /* Markdown answers inside the conversation */
+  .prose-jarvis {
+    @apply text-[0.975rem] leading-relaxed text-foreground;
   }
-
-  .glow-cyan {
-    box-shadow: var(--glow-cyan);
+  .prose-jarvis > * + * {
+    @apply mt-3;
   }
-
-  .glow-purple {
-    box-shadow: var(--glow-purple);
+  .prose-jarvis h1,
+  .prose-jarvis h2,
+  .prose-jarvis h3 {
+    @apply font-display text-lg font-semibold text-foreground;
   }
-
-  .glow-text {
-    text-shadow: 0 0 10px hsl(190 100% 50% / 0.5), 0 0 30px hsl(190 100% 50% / 0.2);
+  .prose-jarvis strong {
+    @apply font-semibold text-foreground;
   }
-
-  .glow-text-purple {
-    text-shadow: 0 0 10px hsl(260 80% 60% / 0.5), 0 0 30px hsl(260 80% 60% / 0.2);
+  .prose-jarvis a {
+    @apply text-primary underline decoration-primary/40 underline-offset-2 hover:decoration-primary;
   }
-
-  .font-display {
-    font-family: 'Orbitron', sans-serif;
+  .prose-jarvis ul {
+    @apply list-disc space-y-1 pl-5 marker:text-muted-foreground;
   }
-
-  .font-mono-tech {
-    font-family: 'Share Tech Mono', monospace;
+  .prose-jarvis ol {
+    @apply list-decimal space-y-1 pl-5 marker:text-muted-foreground;
   }
-
-  .holographic-line {
-    @apply h-px w-full;
-    background: linear-gradient(90deg, transparent, hsl(var(--jarvis-cyan)), transparent);
+  .prose-jarvis code {
+    @apply rounded bg-background/70 px-1.5 py-0.5 font-mono text-[0.85em] text-primary;
   }
-
-  .holographic-line-vertical {
-    @apply w-px h-full;
-    background: linear-gradient(180deg, transparent, hsl(var(--jarvis-cyan)), transparent);
+  .prose-jarvis pre {
+    @apply overflow-x-auto rounded-lg border border-border bg-background/80 px-4 py-3 font-mono text-[0.8125rem] leading-[1.55];
   }
-
-  .floating-card {
-    @apply glass-panel p-6 glow-border transition-all duration-300;
+  .prose-jarvis pre code {
+    @apply bg-transparent p-0 text-foreground;
   }
-
-  .floating-card:hover {
-    box-shadow: var(--glow-cyan);
-    border-color: hsl(var(--jarvis-cyan) / 0.3);
-    transform: translateY(-2px);
+  .prose-jarvis blockquote {
+    @apply border-l-2 border-primary/40 pl-3 text-muted-foreground;
   }
-
-  .scan-line {
-    @apply absolute left-0 right-0 h-px opacity-30 pointer-events-none;
-    background: linear-gradient(90deg, transparent, hsl(var(--jarvis-cyan)), transparent);
-    animation: scan 4s linear infinite;
+  .prose-jarvis table {
+    @apply w-full border-collapse text-sm;
   }
-
-  .hex-grid-bg {
-    background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 5 L55 20 L55 40 L30 55 L5 40 L5 20 Z' fill='none' stroke='%2300bcd440' stroke-width='0.5'/%3E%3C/svg%3E");
-    background-size: 60px 60px;
+  .prose-jarvis th,
+  .prose-jarvis td {
+    @apply border border-border px-2 py-1 text-left;
   }
 }
 
-@keyframes scan {
-  0% { top: 0%; }
-  100% { top: 100%; }
+@keyframes jarvis-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
+/* SVG ring groups rotate around the viewBox centre. */
+.jarvis-ring {
+  transform-box: view-box;
+  transform-origin: 50% 50%;
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-10px); }
+@keyframes boot-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-@keyframes rotate-slow {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+/* The one orchestrated moment: the core powering up on first load. */
+.core-boot {
+  animation: boot-in 900ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-@keyframes data-flow {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 200% 50%; }
-}
-
-.animate-pulse-glow {
-  animation: pulse-glow 2s ease-in-out infinite;
-}
-
-.animate-float {
-  animation: float 6s ease-in-out infinite;
-}
-
-.animate-rotate-slow {
-  animation: rotate-slow 20s linear infinite;
-}
-
-.animate-data-flow {
-  background-size: 200% 100%;
-  animation: data-flow 3s linear infinite;
+@media (prefers-reduced-motion: reduce) {
+  .jarvis-ring,
+  .core-boot {
+    animation: none !important;
+  }
 }

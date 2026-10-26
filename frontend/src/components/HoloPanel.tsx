@@ -1,34 +1,25 @@
-import { ReactNode } from "react";
-import { motion } from "framer-motion";
+import type { ReactNode } from "react";
 
-interface HoloPanelProps {
+interface PanelProps {
   children: ReactNode;
   title?: string;
+  /** Optional element shown at the right of the title row (a count, a button). */
+  aside?: ReactNode;
   className?: string;
-  delay?: number;
+  as?: "section" | "div";
 }
 
-const HoloPanel = ({ children, title, className = "", delay = 0 }: HoloPanelProps) => {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.5, delay, ease: "easeOut" }}
-      className={`floating-card relative ${className}`}
-    >
-      <div className="scan-line" />
-      {title && (
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-1.5 h-6 rounded-full bg-primary/60" />
-          <h3 className="font-display text-sm tracking-widest uppercase text-primary glow-text">
-            {title}
-          </h3>
-          <div className="flex-1 holographic-line" />
-        </div>
-      )}
-      {children}
-    </motion.div>
-  );
-};
+/** Flat instrument panel. The name is kept from the original codebase; it no longer glows. */
+const HoloPanel = ({ children, title, aside, className = "", as: Tag = "section" }: PanelProps) => (
+  <Tag className={`panel p-5 ${className}`}>
+    {(title || aside) && (
+      <header className="mb-4 flex items-baseline justify-between gap-3">
+        {title && <h2 className="text-base font-semibold text-foreground">{title}</h2>}
+        {aside && <div className="text-sm text-muted-foreground">{aside}</div>}
+      </header>
+    )}
+    {children}
+  </Tag>
+);
 
 export default HoloPanel;

@@ -19,3 +19,9 @@ memory.json
 
 .DS_Store
 Thumbs.db
+# JARVIS local config / runtime data
+backend/jarvis.config.json
+backend/.jarvis/
+*.log
+.pytest_cache/
+.ruff_cache/

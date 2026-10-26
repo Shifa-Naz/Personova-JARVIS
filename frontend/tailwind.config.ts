@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import animate from "tailwindcss-animate";
 
 export default {
   darkMode: ["class"],
@@ -14,9 +15,9 @@ export default {
     },
     extend: {
       fontFamily: {
-        display: ["Orbitron", "sans-serif"],
-        body: ["Rajdhani", "sans-serif"],
-        mono: ["Share Tech Mono", "monospace"],
+        display: ['"Chakra Petch"', "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ['"IBM Plex Sans"', "ui-sans-serif", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
+        mono: ['"IBM Plex Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       colors: {
         border: "hsl(var(--border))",
@@ -57,8 +58,16 @@ export default {
           blue: "hsl(var(--jarvis-blue))",
           purple: "hsl(var(--jarvis-purple))",
           teal: "hsl(var(--jarvis-teal))",
+          violet: "hsl(var(--jarvis-violet))",
+          amber: "hsl(var(--jarvis-amber))",
+          red: "hsl(var(--jarvis-red))",
+          green: "hsl(var(--jarvis-green))",
+          grey: "hsl(var(--jarvis-grey))",
           dark: "hsl(var(--jarvis-dark))",
           panel: "hsl(var(--jarvis-panel))",
+          raised: "hsl(var(--jarvis-raised))",
+          ice: "hsl(var(--jarvis-cyan))",
+          ember: "hsl(var(--jarvis-amber))",
         },
         sidebar: {
           DEFAULT: "hsl(var(--sidebar-background))",
@@ -92,5 +101,5 @@ export default {
       },
     },
   },
-  plugins: [require("tailwindcss-animate")],
+  plugins: [animate],
 } satisfies Config;

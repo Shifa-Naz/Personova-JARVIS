@@ -1,0 +1,45 @@
+# JARVIS backend — Python 3.11 or 3.12 recommended (Linux and Windows).
+#
+# conda create -n jarvis python=3.11 -y
+# conda activate jarvis
+# pip install -r requirements.txt
+#
+# Non-Python requirements:
+#   - Ollama (offline LLM): https://ollama.com  ->  ollama pull llama3.2:3b
+#   - Linux: xdg-utils, wpctl (PipeWire) or pactl, optional playerctl, optional wl-clipboard/xclip
+#   - Optional OCR clicking: Tesseract OCR binary (Windows: C:\Program Files\Tesseract-OCR)
+
+# ---- core API ---------------------------------------------------------------
+flask>=3.0,<4
+flask-cors>=4.0,<7
+pydantic>=2.6,<3
+python-dotenv>=1.0,<2
+
+# ---- system / files / clipboard ---------------------------------------------
+psutil>=5.9,<8
+send2trash>=1.8,<3
+pyperclip>=1.8,<2
+pillow>=10.1,<13
+
+# ---- offline speech-to-text (Whisper via CTranslate2, runs on CPU) ----------
+# First run downloads the model once: python run.py --download-models
+faster-whisper>=1.0,<2
+
+# ---- offline text-to-speech (Piper neural voices, runs on CPU) ---------------
+# First run downloads the voice once: python run.py --download-models
+piper-tts>=1.3,<2
+
+# ---- screen understanding ("what's on my screen?") ---------------------------
+# Offline OCR with bundled ONNX models (same on Linux and Windows).
+rapidocr_onnxruntime>=1.2,<2
+# Screen capture on Linux Wayland goes through xdg-desktop-portal over D-Bus.
+jeepney>=0.8; sys_platform == "linux"
+
+# ---- keyboard/mouse automation + OCR clicks (optional at runtime) -----------
+# Not usable on Linux Wayland sessions; JARVIS reports it as unavailable there.
+pyautogui>=0.9.54,<1
+pytesseract>=0.3.10,<1
+
+# ---- development / tests ----------------------------------------------------
+pytest>=8,<10
+ruff>=0.5

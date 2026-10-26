@@ -1,78 +1,120 @@
-import { Link, useLocation } from "react-router-dom";
-import { motion } from "framer-motion";
-import { LayoutDashboard, Mic, StickyNote, CalendarDays, ListChecks, Info } from "lucide-react";
+import { Ear, Menu, RotateCw } from "lucide-react";
+import { useState } from "react";
+import { Link, NavLink } from "react-router-dom";
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { useAssistant } from "@/features/assistant/context";
+import { PHASES, phaseColor } from "@/features/assistant/phase";
+import { WAKE_PHRASE } from "@/features/assistant/wake";
 
 const navItems = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard },
-  { to: "/assistant", label: "Assistant", icon: Mic },
-  { to: "/notes", label: "Notes", icon: StickyNote },
-  { to: "/calendar", label: "Calendar", icon: CalendarDays },
-  { to: "/tasks", label: "Tasks", icon: ListChecks },
-  { to: "/about", label: "About", icon: Info },
+  { to: "/", label: "Dashboard", end: true },
+  { to: "/assistant", label: "Console", end: false },
+  { to: "/tasks", label: "Tasks", end: false },
+  { to: "/calendar", label: "Calendar", end: false },
+  { to: "/notes", label: "Notes", end: false },
+  { to: "/about", label: "About", end: false },
 ];
 
+/** The wordmark: a small core glyph and the name, set in the display face. */
+export const Wordmark = () => (
+  <span className="flex items-center gap-2.5">
+    <svg viewBox="0 0 24 24" className="h-6 w-6 text-primary" aria-hidden>
+      <circle cx="12" cy="12" r="10.5" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeWidth="1" />
+      <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="9 3" />
+      <circle cx="12" cy="12" r="2.6" fill="currentColor" />
+    </svg>
+    <span className="font-display text-xl font-semibold tracking-[0.08em] text-foreground">JARVIS</span>
+  </span>
+);
+
+const linkClass = ({ isActive }: { isActive: boolean }) =>
+  `relative flex h-16 items-center px-3 text-[0.95rem] transition-colors ${
+    isActive
+      ? "text-foreground after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:rounded-full after:bg-primary"
+      : "text-muted-foreground hover:text-foreground"
+  }`;
+
 const JarvisNavbar = () => {
-  const location = useLocation();
+  const { state, reconnect, wakeListening } = useAssistant();
+  const [open, setOpen] = useState(false);
 
   return (
-    <motion.nav
-      initial={{ y: -60, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6, ease: "easeOut" }}
-      className="fixed top-0 left-0 right-0 z-50 glass-panel border-b border-border/30"
-    >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex items-center gap-3 group">
-            <div className="relative w-8 h-8">
-              <div className="absolute inset-0 rounded-full bg-primary/20 animate-pulse-glow" />
-              <div className="absolute inset-1 rounded-full border border-primary/60 flex items-center justify-center">
-                <div className="w-2 h-2 rounded-full bg-primary" />
-              </div>
-            </div>
-            <span className="font-display text-xl font-bold tracking-widest text-primary glow-text">
-              J.A.R.V.I.S
+    <nav className="fixed inset-x-0 top-0 z-50 border-b border-border bg-background/85 backdrop-blur-md" aria-label="Main">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+        <Link to="/" className="flex min-h-11 items-center" aria-label="JARVIS dashboard">
+          <Wordmark />
+        </Link>
+
+        <div className="hidden items-center md:flex">
+          {navItems.map((item) => (
+            <NavLink key={item.to} to={item.to} end={item.end} className={linkClass}>
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-1">
+          {state.connected ? (
+            <span
+              className="hidden items-center gap-2 px-2 text-sm text-muted-foreground sm:flex"
+              title={wakeListening ? `Listening for “${WAKE_PHRASE}”` : PHASES[state.phase].label}
+            >
+              <span className="h-2 w-2 rounded-full" style={{ background: phaseColor(state.phase) }} />
+              {state.phase === "IDLE" && wakeListening ? (
+                <>
+                  <Ear className="h-4 w-4 text-primary" aria-hidden /> Listening for your call
+                </>
+              ) : (
+                PHASES[state.phase].label
+              )}
             </span>
-          </Link>
+          ) : (
+            <button
+              type="button"
+              onClick={reconnect}
+              className="flex min-h-10 items-center gap-2 rounded-lg px-3 text-sm text-jarvis-ember hover:bg-secondary"
+            >
+              <RotateCw className="h-4 w-4" /> Offline, retry
+            </button>
+          )}
 
-          <div className="hidden md:flex items-center gap-1">
-            {navItems.map((item) => {
-              const isActive = location.pathname === item.to;
-              const Icon = item.icon;
-              return (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={`relative flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-300 ${
-                    isActive
-                      ? "text-primary glow-text"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {isActive && (
-                    <motion.div
-                      layoutId="activeNav"
-                      className="absolute inset-0 rounded-lg bg-primary/10 border border-primary/20 glow-border"
-                      transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-                    />
-                  )}
-                  <Icon className="w-4 h-4 relative z-10" />
-                  <span className="relative z-10 font-body tracking-wide">{item.label}</span>
-                </Link>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-primary/20 bg-primary/5">
-              <div className="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse" />
-              <span className="text-xs font-mono text-primary/80">ONLINE</span>
-            </div>
-          </div>
+          <Sheet open={open} onOpenChange={setOpen}>
+            <SheetTrigger asChild>
+              <button
+                type="button"
+                className="flex h-11 w-11 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground md:hidden"
+                aria-label="Open menu"
+              >
+                <Menu className="h-6 w-6" />
+              </button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-72 border-border bg-card">
+              <SheetTitle>
+                <Wordmark />
+              </SheetTitle>
+              <ul className="mt-8 space-y-1">
+                {navItems.map((item) => (
+                  <li key={item.to}>
+                    <NavLink
+                      to={item.to}
+                      end={item.end}
+                      onClick={() => setOpen(false)}
+                      className={({ isActive }) =>
+                        `flex min-h-12 items-center rounded-lg px-3 text-base ${
+                          isActive ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"
+                        }`
+                      }
+                    >
+                      {item.label}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
-      <div className="holographic-line" />
-    </motion.nav>
+    </nav>
   );
 };
 

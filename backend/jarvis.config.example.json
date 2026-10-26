@@ -1,0 +1,11 @@
+{
+  "apps": {
+    "obsidian": {
+      "display_name": "Obsidian",
+      "aliases": ["obsidian", "notes app"],
+      "linux": [["obsidian"], {"flatpak": "md.obsidian.Obsidian"}],
+      "windows": [{"start": "obsidian:"}],
+      "process_names": {"linux": ["obsidian"], "windows": ["Obsidian.exe"]}
+    }
+  }
+}
