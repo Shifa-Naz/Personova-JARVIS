@@ -76,6 +76,9 @@ class Settings:
     tts_rate: float = 1.0
 
     tesseract_cmd: str | None = None
+    # Briefing (schedule + tech news) when the laptop wakes from sleep or the screen is unlocked.
+    briefing_on_wake: bool = True
+    news_feeds: tuple[str, ...] = ()  # empty = jarvis.news.DEFAULT_FEEDS
     app_overrides: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -158,6 +161,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         pass
 
     s.tesseract_cmd = env.get("JARVIS_TESSERACT_CMD") or None
+    s.briefing_on_wake = _bool(env.get("JARVIS_BRIEFING_ON_WAKE"), True)
+    s.news_feeds = tuple(u.strip() for u in env.get("JARVIS_NEWS_FEEDS", "").split(",") if u.strip())
 
     config_file = env.get("JARVIS_CONFIG_FILE")
     if config_file and Path(config_file).expanduser().is_file():

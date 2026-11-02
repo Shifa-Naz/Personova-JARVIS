@@ -82,6 +82,8 @@ class ExecResponse(BaseModel):
     success: bool = True
     response_type: Literal["conversation", "action", "confirmation", "clarification", "error"] = "action"
     speech: str = ""
+    # True when the voice already said the answer sentence by sentence while it streamed.
+    spoken_live: bool = False
 
     def model_post_init(self, _ctx: Any) -> None:
         self.success = self.status not in ("error",)
@@ -94,12 +96,16 @@ class ExecResponse(BaseModel):
         elif self.results and all(r.action in CONVERSATION_ACTIONS for r in self.results):
             self.response_type = "conversation"
         if not self.speech:
-            text = self.reply
+            text, exact = self.reply, False
             for r in self.results:
-                spoken = (r.data or {}).get("speech")
-                if spoken and r.message and r.message in text:
+                data = r.data or {}
+                spoken = data.get("speech")
+                if spoken is not None and r.message and r.message in text:
                     text = text.replace(r.message, spoken)
-            self.speech = to_speech(text, max_words=60)
+                    exact = exact or bool(data.get("speech_exact"))
+            # speech_exact: the action wrote its spoken version on purpose (briefing, news) or already said it live.
+            self.speech = " ".join(text.split()) if exact else to_speech(text, max_words=60)
+            self.spoken_live = any((r.data or {}).get("spoken_live") for r in self.results)
 
 
 CONVERSATION_ACTIONS = {
@@ -115,6 +121,9 @@ CONVERSATION_ACTIONS = {
     "note_list",
     "task_list",
     "event_list",
+    "daily_briefing",
+    "schedule_today",
+    "news_headlines",
 }
 ENTITY_KEYS = (
     "app",
@@ -193,9 +202,11 @@ class Pipeline:
         confirmations: ConfirmationStore | None = None,
         ocr=None,
         store=None,
+        news=None,
     ) -> None:
         self.ocr = ocr
         self.store = store
+        self.news = news
         self.settings = settings
         self.registry = registry
         self.matcher = matcher
@@ -241,9 +252,13 @@ class Pipeline:
             return self._plan_response(rid, result, session)
 
     def execute(
-        self, plan_id: str, session_id: str = "default", on_delta: Callable[[str], None] | None = None
+        self,
+        plan_id: str,
+        session_id: str = "default",
+        on_delta: Callable[[str], None] | None = None,
+        on_say: Callable[[str], None] | None = None,
     ) -> ExecResponse:
-        """`on_delta` receives answer text as it is generated (streaming endpoint)."""
+        """`on_delta` receives answer text as it is generated, `on_say` each finished spoken sentence (streaming)."""
         rid = secrets.token_hex(6)
         with self._lock:
             stored = self._plans.pop(plan_id, None)
@@ -257,7 +272,7 @@ class Pipeline:
             session = self.sessions.get(session_id)
             # A new command abandons any question that was still pending.
             self.confirmations.cancel_session(session_id)
-            resp = self._run(rid, stored.steps, session, on_delta=on_delta)
+            resp = self._run(rid, stored.steps, session, on_delta=on_delta, on_say=on_say)
             resp.intent = stored.intent
             session.add_turn(stored.text, resp.reply)
             return resp
@@ -459,7 +474,12 @@ class Pipeline:
             self._plans.pop(pid, None)
 
     # ------------------------------------------------------------ execution
-    def _context(self, session: SessionContext, on_delta: Callable[[str], None] | None = None) -> ExecContext:
+    def _context(
+        self,
+        session: SessionContext,
+        on_delta: Callable[[str], None] | None = None,
+        on_say: Callable[[str], None] | None = None,
+    ) -> ExecContext:
         return ExecContext(
             settings=self.settings,
             platform=self.platform,
@@ -470,7 +490,9 @@ class Pipeline:
             session=session,
             ocr=self.ocr,
             store=self.store,
+            news=self.news,
             on_delta=on_delta,
+            on_say=on_say,
         )
 
     def _run(
@@ -482,8 +504,9 @@ class Pipeline:
         first_confirmed: bool = False,
         first_prepared: Prepared | None = None,
         on_delta: Callable[[str], None] | None = None,
+        on_say: Callable[[str], None] | None = None,
     ) -> ExecResponse:
-        ctx = self._context(session, on_delta)
+        ctx = self._context(session, on_delta, on_say)
         results: list[StepResult] = []
         messages: list[str] = []
 

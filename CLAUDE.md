@@ -78,7 +78,10 @@ Flask API (127.0.0.1:5000 only)  host check · origin allow-list · per-launch X
   JsonStore (storage/store.py): memory, notes, tasks, events — atomic writes, corruption recovery
   Platform adapters: LinuxAdapter | WindowsAdapter (FakeAdapter in tests)
   FileSearchService (background index, ranked, root-confined) · OcrEngine · Transcriber · Synthesizer
-  SessionContext: in-memory history + last file/media/search (resolves "it", "that song", "the first result")
+  SessionContext: in-memory history (sent to the model within a ~900-char budget: CPU prompt reading costs ~2 s per 100 tokens) + last file/media/search
+  WakeWatcher (wake_watch.py): sleep/resume + lock-screen detection → briefing → EventBus → GET /events long-poll
+  NewsService (news.py): RSS/Atom headlines, cached 15 min · briefing.py: schedule + news + machine, shared text
+launch.py (outside the API): starts Ollama/backend/frontend, opens the Chrome/Edge app window, supervises, autostart
 ```
 
 ## 2. Directory structure
@@ -86,12 +89,16 @@ Flask API (127.0.0.1:5000 only)  host check · origin allow-list · per-launch X
 ```
 backend/
   run.py                      python run.py [--check | --download-models]; migrates the legacy data dir
+  launch.py                   one-command start + app window + supervision; --install-autostart / --remove-autostart
   requirements.txt · .env.example · jarvis.config.example.json · pyproject.toml (ruff + pytest)
   jarvis/
     app.py                    Flask factory, security guard, /api/v1 routes (incl. /items), build_services()
     config.py                 Settings, load_settings() (loopback only, ULTRON_* fallback), migrate_legacy_data_dir()
+    briefing.py · news.py     today's schedule, headlines, the briefing text (reply + speech)
+    wake_watch.py             EventBus, WakeWatcher, Windows/GNOME lock-state probes, briefing publisher
+    diagnostics.py            warm_up() of every engine at start; --check self-tests (OCR on a test image, real capture)
     logging_setup.py          JSON rotating log, redact(), recent_events ring buffer
-    actions/                  base.py, registry.py, conversation.py, memory.py, productivity.py, web.py, apps.py,
+    actions/                  base.py, registry.py, conversation.py, memory.py, productivity.py, briefing.py, web.py, apps.py,
                               browser.py, files.py, media.py, system.py, screen.py, automation.py; build_registry()
     core/                     intent.py, personal.py, pipeline.py, context.py
     nlp/                      dates.py (date/time extraction + ambiguity), speech.py (Markdown → short spoken text)
@@ -120,11 +127,12 @@ frontend/src/
 # backend (inside the user's conda env)
 cd backend && python run.py --check          # capability report (LLM, STT, TTS, OCR, data folder, internet)
 cd backend && python run.py                  # start API
-cd backend && python -m pytest               # 234 tests (+1 that needs JARVIS_TEST_VOICE_DIR for real Piper)
+cd backend && python launch.py               # everything + the hands-free app window (what the demo uses)
+cd backend && python -m pytest               # 267 tests (+1 that needs JARVIS_TEST_VOICE_DIR for real Piper)
 cd backend && ruff check . && ruff format --check .
 # frontend
 cd frontend && npm ci && npm run dev         # :8080
-cd frontend && npm run lint && npm test && npm run build    # 40 tests
+cd frontend && npm run lint && npm test && npm run build    # 45 tests
 ```
 Lint baseline: 0 errors, 7 `react-refresh` warnings, all in untouched shadcn `components/ui/*`.
 
@@ -140,9 +148,13 @@ Lint baseline: 0 errors, 7 `react-refresh` warnings, all in untouched shadcn `co
 | `GET/POST /items/<notes\|tasks\|events>`, `PATCH/DELETE /items/<kind>/<id>`, `POST /items/<kind>/import` | token | the pages' data (same store the assistant uses); unknown fields dropped |
 | `POST /transcribe` (audio) · `POST /speak {text}` (→ WAV) | token | offline STT / TTS; 503 when not installed |
 | `GET /logs/recent` | token | redacted pipeline events |
+| `GET /system?processes=1` · `GET /briefing` · `GET /news?count=` | token | busiest apps · briefing now · headlines (cached) |
+| `GET /events?after=&wait=` · `POST /events/briefing {reason}` | token | long-poll for pushed events (lid-open briefing) · push one now |
 
 `ExecResponse` (PDF §19): `success`, `response_type` (conversation | action | confirmation | clarification | error),
-`reply` (Markdown for the page), `speech` (short plain text for the voice), `results[]`, `confirmation`, `request_id`.
+`reply` (Markdown for the page), `speech` (short plain text for the voice), `results[]`, `confirmation`, `request_id`,
+`spoken_live` (the answer was already spoken sentence by sentence via `say` events on `/execute/stream`).
+`data.speech_exact` on a result means its `speech` is used as written (briefing, news), not shortened to 60 words.
 
 ## 5. Actions (the complete allow-list)
 
@@ -153,7 +165,8 @@ Lint baseline: 0 errors, 7 `react-refresh` warnings, all in untouched shadcn `co
 | Tasks / events / notes | `*_create`, `*_update`, `task_complete/reopen` SAFE · `*_list`, `note_search/read` READ_ONLY · `*_delete` DESTRUCTIVE | mixed |
 | Files | `find_file` RO · `open_file`, `open_folder`, `create_folder`, `create_file` (text types only, never overwrites), `copy_file` (verifies; offers overwrite) SAFE · `rename_file` SENSITIVE · `delete_files` (trash), `move_file` DESTRUCTIVE | mixed |
 | Apps / web / media | `open_application` (verifies process), `open_url`, `search_web`, `search_youtube`, `play_youtube`, `open_first_result`, `play_media`, `media_control`, `volume_control` SAFE · `close_application` SENSITIVE | mixed |
-| System / screen | `system_information`, `clipboard_read`, `describe_screen` RO · `screenshot` SAFE · `clipboard_write` SENSITIVE | mixed |
+| Briefing | `daily_briefing`, `schedule_today`, `news_headlines` (online) | READ_ONLY |
+| System / screen | `system_information` (incl. `processes`, `uptime`), `clipboard_read`, `describe_screen` RO · `screenshot` SAFE · `clipboard_write` SENSITIVE | mixed |
 | Input automation | `scroll` SAFE · `type_text`, `press_key`, `click_text` (OCR match verified, never blind) SENSITIVE | mixed |
 | Refused | `blocked_request` (shell, scripts, install, payments, messages, shutdown) | BLOCKED |
 
@@ -166,7 +179,8 @@ Normalization strips "jarvis" (as a prefix, suffix, or "hey/ok jarvis"); "hello 
 on lowercase text, and `restore_case()` puts the user's capitalisation back into titles, names and notes. Order inside a
 segment:
 
-1. **Storage matchers** (tasks, events, notes, memory). They only store text, so they run before the safety filter.
+1. **Storage matchers**: briefing/schedule/news/system-status phrases (full-phrase, read-only), create_file, then tasks,
+   events, notes, memory. They only read or store text, so they run before the safety filter.
 2. The BLOCKED filter.
 3. Small talk, math, system info, media, screen.
 4. File create/copy/rename.
@@ -203,7 +217,18 @@ States: `OFFLINE, IDLE, LISTENING, PROCESSING, THINKING, EXECUTING, SPEAKING, SU
     `core/intent.py`). Speech bursts can be up to about 9 s, so long commands fit.
   - **Limits:** the setting is `wake` (on by default), and it works only while a JARVIS tab is open.
 - TTS: the `local` engine is Piper via `/speak` on Web Audio, and the core follows the real output level. It falls back
-  to `speechSynthesis`.
+  to `speechSynthesis`. Speech is a queue (`enqueueSpeech`): each sentence is synthesized as soon as it is queued and
+  played in order. Streaming answers are spoken sentence by sentence (`SpeechStreamer` on the backend emits `say`
+  events), so the voice starts after the first sentence.
+- **Autoplay:** Chrome keeps every AudioContext suspended until the page is clicked, and `resume()` never settles; the
+  wake listener then hears silence. Nothing awaits `resume()` without a 400 ms limit (`resumeQuick`), the UI shows
+  "Click anywhere once…" (`audioLocked`), and `launch.py` opens the app with `--autoplay-policy=no-user-gesture-required`
+  plus a profile that pre-approves the mic for the JARVIS origin (verified in Chrome), so the demo needs no click.
+- **Wake listener resilience:** it reopens the mic when the device died (sleep, unplug) and retries transient errors
+  with back-off; only MIC_DENIED / STT_UNAVAILABLE stop it. SUCCESS/ERROR always settle back to IDLE once nothing is
+  speaking, so the listener can't be left switched off.
+- **Lid-open briefing:** the backend publishes it (see §12); the provider long-polls `/events`, shows it in the console
+  and on the dashboard, and speaks it once JARVIS is idle. `?briefing=1` (used by the launcher at login) briefs on load.
 
 ## 8. Design system
 
@@ -267,7 +292,12 @@ live in `index.css` and are exposed through Tailwind.
   `confirmation`, `blocked` and `llm_plan_rejected`.
 - **Data:** the data dir is `~/.local/share/jarvis` (or `%APPDATA%\jarvis`). It contains `data/*.json` (store),
   `voices/`, `models/` and `tmp/`.
+- **Wake detection** (`wake_watch.py`, 2 s ticks): wall-clock minus monotonic-clock gap > 6 s, or a tick > 8 s late, means
+  the machine slept; an unlock after ≥ 20 s locked counts too (Windows modern standby). It waits until the lock screen
+  is gone (`OpenInputDesktop` on Windows, `org.gnome.ScreenSaver.GetActive` on GNOME), waits up to 20 s for the
+  network, then publishes. 15 s cooldown.
 - **Settings:** all are in `backend/.env.example`: `JARVIS_HOST/PORT/DEBUG/ALLOWED_ORIGINS`, `JARVIS_LLM_*` (incl. `JARVIS_LLM_THREADS`),
+  `JARVIS_BRIEFING_ON_WAKE`, `JARVIS_NEWS_FEEDS`, `JARVIS_FRONTEND_PORT` (launcher),
   `JARVIS_VISION_MODEL`, `JARVIS_STT_*`, `JARVIS_TTS_*`, `JARVIS_SEARCH_ROOTS`, `JARVIS_DATA_DIR`,
   `JARVIS_TESSERACT_CMD` and `JARVIS_CONFIG_FILE`.
 - **Frontend:** `VITE_JARVIS_API_URL`.
@@ -276,13 +306,13 @@ live in `index.css` and are exposed through Tailwind.
 
 | Works offline | Needs internet |
 |---|---|
-| Everything except the items on the right: apps, files, media, system, screen reading, memory, tasks/calendar/notes, rule commands, Ollama, Whisper, Piper | `web_answer`, `open_first_result`, web and YouTube search, browser STT |
+| Everything except the items on the right: apps, files, media, system, screen reading, memory, tasks/calendar/notes, rule commands, Ollama, Whisper, Piper | `web_answer`, `open_first_result`, web and YouTube search, tech news (the briefing says it's offline), browser STT |
 
 Online actions fail with `OFFLINE` and a spoken explanation.
 
 ## 14. Testing
 
-- **Backend** (pytest, 234): an intent table including regressions of the original bugs and the PDF acceptance phrases.
+- **Backend** (pytest, 267): an intent table including regressions of the original bugs and the PDF acceptance phrases.
   Also covered:
   - the pipeline: confirmations, offers, offline, blocked, LLM validation, confidence, speech and the contract fields;
   - files, including create/copy/rename and ambiguity;
@@ -290,13 +320,17 @@ Online actions fail with `OFFLINE` and a spoken explanation.
   - the date parser;
   - memory, including secrets and context;
   - productivity, the web parser (ads and redirects), OCR/screen and TTS;
-  - the store's corruption recovery.
-- **Frontend** (vitest, 40): wake-phrase matching, state machine, local navigation, the storage cache and legacy import, malformed JSON, the API
+  - the store's corruption recovery;
+  - briefing/news parsing and fallback, the wake watcher with fake clocks, live speech (fuzzed against `to_speech`),
+    both RapidOCR result shapes and a DLL-load failure, the history budget, and the launcher's profile/autostart.
+- **Frontend** (vitest, 45): wake-phrase matching, state machine, local navigation, the storage cache and legacy import, malformed JSON, the API
   client token refresh, and the TTS fallback.
 - **Manual end-to-end** (2026-10-11, Fedora, headless Chrome, real backend and `llama3.2:3b`):
   - voice-style commands created tasks and events, and a Markdown answer with a code block rendered;
   - the destructive dialog appeared, and pages showed zero overflow at 390 and 1280 px with no console errors.
 - **Earlier checks:** a live portal capture plus RapidOCR (about 4 s) and Piper speech.
+- **Manual end-to-end** (2026-11-02, Fedora, `launch.py` on test ports, real Chrome with the launcher's flags and a fake
+  mic playing a Piper-recorded "Jarvis, what's my schedule today?", real Ollama `llama3.2`): see §17 for timings.
 
 ## 15. Coding standards & naming
 
@@ -323,6 +357,16 @@ Note: nothing after the initial commit has been committed yet, so new files are 
 - **No in-page browser automation:** there's no Playwright, so JARVIS can't click inside pages. Search, play and
   first-result are URL-based, and `play_youtube` parses YouTube's HTML, which is fragile.
 - **Web retrieval** depends on DuckDuckGo's HTML endpoint, which can change or rate-limit.
+- **Measured 2026-11-02** (llama3.2 via `launch.py`, real Chrome, 27/27 e2e checks passed): briefing, schedule, news and
+  system answers reply and start speaking in under 1 s; the start-up and pushed wake-up briefings speak within 0.5 s;
+  "Jarvis, what's my schedule today?" by voice is transcribed in 0.7 s; model answers start speaking after 7–15 s
+  (first token 7–15 s, depending on history) instead of after the whole answer (24–31 s); "what's on my screen" ~23 s
+  (OCR 4 s + model 18 s).
+- **Windows:** the new screen-capture fallbacks, lock detection (`OpenInputDesktop`) and the launcher's Chrome/Edge
+  discovery and Startup-folder entry are written for Windows but untested there; `python run.py --check` tests capture
+  and OCR for real.
+- **Briefing on wake** needs the backend running through sleep (it is, when started by the launcher or autostart).
+  Lid-close settings that shut down or hibernate instead of sleeping start fresh at login: the login briefing covers that.
 - **Speed** (qwen2.5vl:3b, i5-1240P, measured 2026-10-14 in the browser): answers stream, first word after about 7 s,
   a full short answer in about 12 s (capped at 320 tokens). The model is warmed up at start and kept loaded 30 min, with
   8 threads. "What's on my screen" takes about 30 s: OCR 6–12 s plus about 18 s of the model. The screenshot goes to the
@@ -336,7 +380,7 @@ Note: nothing after the initial commit has been committed yet, so new files are 
 1. Run the PDF §25 acceptance list on Windows.
 3. Playwright e2e specs in `frontend/e2e/` (the console flow, confirmations, the pages).
 4. Optional Playwright browser automation for in-page actions.
-5. Stream LLM answers to the UI to cut the perceived latency.
+5. Speak `describe_screen` sentence by sentence too (answers already are).
 
 ## 19. Acceptance — final demo scenario
 

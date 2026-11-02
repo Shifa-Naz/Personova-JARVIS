@@ -6,6 +6,9 @@ import type {
   SessionInfo,
   Telemetry,
   Capabilities,
+  Briefing,
+  Headline,
+  JarvisEvent,
 } from "@/features/assistant/types";
 
 export const API_BASE: string =
@@ -127,7 +130,7 @@ export class JarvisClient {
    * Run a plan and receive answer text while the model is still writing it (Server-Sent Events).
    * `onDelta` gets each new piece; resolves with the final response.
    */
-  async executeStream(planId: string, onDelta: (text: string) => void): Promise<ExecResponse> {
+  async executeStream(planId: string, onDelta: (text: string) => void, onSay?: (sentence: string) => void): Promise<ExecResponse> {
     await this.connect();
     const send = () =>
       this.fetchImpl(`${this.base}/api/v1/execute/stream`, {
@@ -162,6 +165,7 @@ export class JarvisClient {
         if (!line) continue;
         const msg = JSON.parse(line.slice(6)) as { type: string; text?: string; response?: ExecResponse };
         if (msg.type === "delta" && msg.text) onDelta(msg.text);
+        if (msg.type === "say" && msg.text) onSay?.(msg.text);
         if (msg.type === "done" && msg.response) return msg.response;
       }
     }
@@ -180,8 +184,22 @@ export class JarvisClient {
     return this.call<{ platform: string; capabilities: Capabilities }>("GET", "/api/v1/status");
   }
 
-  system() {
-    return this.call<Telemetry>("GET", "/api/v1/system");
+  system(processes = false) {
+    return this.call<Telemetry>("GET", processes ? "/api/v1/system?processes=1" : "/api/v1/system");
+  }
+
+  /** Today's schedule, tech headlines and a machine check, ready to show and speak. */
+  briefing() {
+    return this.call<Briefing>("GET", "/api/v1/briefing");
+  }
+
+  news(count = 5) {
+    return this.call<{ items: Headline[]; offline: boolean }>("GET", `/api/v1/news?count=${count}`);
+  }
+
+  /** Long-poll for backend events (the lid-open briefing). `after = -1` returns recent ones at once. */
+  events(after: number, waitS = 25) {
+    return this.call<{ seq: number; events: JarvisEvent[] }>("GET", `/api/v1/events?after=${after}&wait=${waitS}`);
   }
 
   logs() {

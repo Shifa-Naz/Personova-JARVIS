@@ -164,8 +164,40 @@ def fake_synth() -> FakeSynth:
     return FakeSynth()
 
 
+class FakeNews:
+    """Canned headlines; never touches the network."""
+
+    def __init__(self) -> None:
+        from jarvis.news import Headline
+
+        self.items = [
+            Headline("Chipmaker unveils a faster laptop processor", "The Verge", "https://example.com/a"),
+            Headline("New open model tops coding benchmark", "TechCrunch", "https://example.com/b"),
+            Headline("Phone makers agree on a repair standard", "Ars Technica", "https://example.com/c"),
+            Headline("Browser adds offline translation", "Google News", "https://example.com/d"),
+        ]
+        self.fail = False
+        self.calls = 0
+
+    def headlines(self, count: int = 5, max_age_s: float = 0):
+        from jarvis.actions.base import ActionError
+
+        self.calls += 1
+        if self.fail:
+            raise ActionError("NEWS_UNAVAILABLE", "I couldn't reach any news source right now.")
+        return self.items[:count]
+
+    def cached(self):
+        return list(self.items)
+
+
 @pytest.fixture
-def services(settings, fake_platform, fake_ai, connectivity, fake_synth, fake_ocr):
+def fake_news() -> FakeNews:
+    return FakeNews()
+
+
+@pytest.fixture
+def services(settings, fake_platform, fake_ai, connectivity, fake_synth, fake_ocr, fake_news):
     files = FileSearchService(settings.search_roots)
     return build_services(
         settings,
@@ -175,6 +207,7 @@ def services(settings, fake_platform, fake_ai, connectivity, fake_synth, fake_oc
         connectivity=connectivity,
         synthesizer=fake_synth,
         ocr=fake_ocr,
+        news=fake_news,
     )
 
 

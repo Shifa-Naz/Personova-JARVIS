@@ -259,7 +259,11 @@ class OllamaProvider(AiProvider):
             return
         try:
             # An empty prompt makes Ollama load the model without generating anything.
-            self._request("/api/generate", {"model": self.model, "prompt": "", "keep_alive": "30m"}, timeout=180)
+            # Same options as real requests: a different num_thread makes Ollama reload the model on the first question.
+            body = {"model": self.model, "prompt": "", "keep_alive": "30m"}
+            if self.threads:
+                body["options"] = {"num_thread": self.threads}
+            self._request("/api/generate", body, timeout=180)
             log.info("Language model %s loaded and ready", self.model)
         except AiUnavailable as exc:
             log.warning("Couldn't preload the language model: %s", exc)

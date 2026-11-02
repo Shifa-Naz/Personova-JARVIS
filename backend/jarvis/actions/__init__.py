@@ -9,6 +9,7 @@ def build_registry() -> ActionRegistry:
     from jarvis.actions import (
         apps,
         automation,
+        briefing,
         browser,
         conversation,
         files,
@@ -21,6 +22,19 @@ def build_registry() -> ActionRegistry:
     )
 
     registry = ActionRegistry()
-    for module in (conversation, memory, productivity, web, apps, browser, files, media, system, screen, automation):
+    for module in (
+        conversation,
+        memory,
+        productivity,
+        briefing,
+        web,
+        apps,
+        browser,
+        files,
+        media,
+        system,
+        screen,
+        automation,
+    ):
         registry.register_all(module.SPECS)
     return registry

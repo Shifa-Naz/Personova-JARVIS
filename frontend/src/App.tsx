@@ -23,6 +23,19 @@ const GlobalConfirmation = () => {
   return <ConfirmationDialog confirmation={state.confirmation} onDecide={(d) => void decide(d)} />;
 };
 
+/** Shown only when JARVIS wasn't opened with the launcher: the browser needs one click before it allows audio. */
+const AudioUnlockHint = () => {
+  const { audioLocked } = useAssistant();
+  if (!audioLocked) return null;
+  return (
+    <div role="status" className="fixed inset-x-0 top-16 z-40 flex justify-center px-4 pt-3">
+      <p className="panel max-w-xl px-4 py-2.5 text-sm text-foreground">
+        Click anywhere once so I can hear and speak. Opening JARVIS with the launcher skips this step.
+      </p>
+    </div>
+  );
+};
+
 const App = () => (
   <TooltipProvider>
     <Toaster />
@@ -30,6 +43,7 @@ const App = () => (
     <BrowserRouter>
       <AssistantProvider>
         <JarvisNavbar />
+        <AudioUnlockHint />
         <main>
           <Routes>
             <Route path="/startup" element={<StartupPage />} />

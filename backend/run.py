@@ -10,7 +10,6 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import threading
 from pathlib import Path
 
 try:
@@ -18,9 +17,11 @@ try:
 except ImportError:  # python-dotenv is optional
     load_dotenv = None
 
+from jarvis import diagnostics
 from jarvis.app import build_services, create_app
 from jarvis.config import load_settings, migrate_legacy_data_dir
 from jarvis.logging_setup import setup_logging
+from jarvis.wake_watch import WakeWatcher, make_briefing_publisher
 
 log = logging.getLogger("jarvis")
 
@@ -75,15 +76,18 @@ def main() -> int:
         synth = services.synthesizer
         tts_state = "ready" if synth.available() else ("voice not downloaded" if synth.installed() else "not installed")
         print(f"Offline TTS      : {tts_state} ({settings.tts_voice})")
-        ocr_engine = services.ocr.engine_name()
-        print(f"Screen OCR       : {ocr_engine or 'not installed (pip install rapidocr_onnxruntime)'}")
+        print(f"Screen OCR       : {diagnostics.check_ocr(services, settings)}")
+        print(f"Screen capture   : {diagnostics.check_screen_capture(services, settings)}")
         print(f"Data folder      : {settings.data_dir}")
         print(f"Internet         : {'online' if services.connectivity.online() else 'offline'}")
         return 0
 
     services.files.start_background_indexing()
-    # Load the language model now, so the first question doesn't also pay the loading time.
-    threading.Thread(target=services.ai.warm_up, name="jarvis-llm-warmup", daemon=True).start()
+    # Load the language model, Whisper, the voice and OCR now, so the first command doesn't pay the loading time.
+    diagnostics.warm_up(services)
+    if settings.briefing_on_wake:
+        WakeWatcher(make_briefing_publisher(services)).start()
+        log.info("Briefing on wake-up is on (JARVIS_BRIEFING_ON_WAKE=false turns it off)")
     app = create_app(services)
     log.info(
         "JARVIS backend on http://%s:%d (allowed origins: %s)",

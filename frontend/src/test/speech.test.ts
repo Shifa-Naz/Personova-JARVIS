@@ -61,3 +61,66 @@ describe("speak()", () => {
     expect(await speak("   ", { engine: "browser" })).toBe("none");
   });
 });
+
+describe("speech queue", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    stopSpeaking();
+  });
+
+  it("groups short sentences and keeps decimals intact", async () => {
+    const { speechChunks } = await import("@/features/assistant/speech");
+    expect(speechChunks("Hi. The answer is 3.5 meters. That is all for now.", 20)).toEqual([
+      "Hi. The answer is 3.5 meters.",
+      "That is all for now.",
+    ]);
+  });
+
+  it("speaks queued sentences in order", async () => {
+    const { enqueueSpeech, speechDrained } = await import("@/features/assistant/speech");
+    const spoken = installBrowserVoice();
+    void enqueueSpeech("First sentence.", { engine: "browser" });
+    void enqueueSpeech("Second sentence.", { engine: "browser" });
+    await speechDrained();
+    expect(spoken).toEqual(["First sentence.", "Second sentence."]);
+  });
+
+  it("stop drops everything still queued", async () => {
+    const { enqueueSpeech, speechDrained } = await import("@/features/assistant/speech");
+    const spoken: string[] = [];
+    let finish: (() => void) | null = null;
+    Object.defineProperty(window, "speechSynthesis", {
+      value: {
+        getVoices: () => [],
+        cancel: () => finish?.(),
+        speak: (u: FakeUtterance) => {
+          spoken.push(u.text);
+          finish = () => u.onend?.(); // still talking until cancelled
+        },
+      },
+      configurable: true,
+    });
+    vi.stubGlobal("SpeechSynthesisUtterance", FakeUtterance);
+    void enqueueSpeech("Talking now.", { engine: "browser" });
+    const later = enqueueSpeech("Never said.", { engine: "browser" });
+    stopSpeaking();
+    expect(await later).toBe("none");
+    await speechDrained();
+    expect(spoken).toEqual(["Talking now."]);
+  });
+
+  it("never waits forever when the browser blocks audio", async () => {
+    const spoken = installBrowserVoice();
+    vi.stubGlobal(
+      "AudioContext",
+      class {
+        state = "suspended";
+        resume = () => new Promise(() => {}); // Chrome without a click: never settles
+        decodeAudioData = async () => ({});
+      },
+    );
+    const engine = await speak("Hello there", { engine: "local", fetchAudio: async () => new Blob(["x"]) });
+    expect(engine).toBe("browser");
+    expect(spoken).toEqual(["Hello there"]);
+  });
+});

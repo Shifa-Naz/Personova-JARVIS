@@ -91,15 +91,47 @@ def layout_text(lines: list[OcrLine], screen_height: int, max_chars: int = 1200,
     return "\n".join(out)
 
 
+# The old package returns ([[box, text, score], ...], elapsed); the newer `rapidocr` (2.x+) returns an object
+# with .boxes/.txts/.scores. Both are supported because Windows users often end up with the newer one.
+_RAPID_MODULES = ("rapidocr_onnxruntime", "rapidocr")
+
+
+def _startup_hint(exc: BaseException) -> str:
+    text = str(exc)
+    if "DLL load failed" in text or "onnxruntime_pybind11_state" in text:
+        return "Install the Microsoft Visual C++ Redistributable (x64) from Microsoft, then restart JARVIS."
+    if "numpy" in text.lower() and ("1.x" in text or "2.x" in text or "_ARRAY_API" in text):
+        return 'Run: pip install "numpy<2" (in the JARVIS environment), then restart JARVIS.'
+    return "Run: pip install --force-reinstall rapidocr_onnxruntime (in the JARVIS environment)."
+
+
+def rapid_lines(result) -> list[OcrLine]:
+    """Normalise either RapidOCR result shape into OcrLines."""
+    if hasattr(result, "txts"):
+        boxes = result.boxes if getattr(result, "boxes", None) is not None else []
+        items = zip(boxes, result.txts or (), result.scores or (), strict=False)
+    else:
+        if isinstance(result, tuple) and len(result) == 2:
+            result = result[0]
+        items = result or []
+    lines = []
+    for box, text, score in items:
+        xs = [int(p[0]) for p in box]
+        ys = [int(p[1]) for p in box]
+        lines.append(OcrLine(str(text).strip(), float(score), min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)))
+    return [line for line in lines if line.text]
+
+
 class OcrEngine:
     def __init__(self, tesseract_cmd: str | None = None) -> None:
         self.tesseract_cmd = tesseract_cmd
         self._rapid = None
+        self._rapid_error: ActionError | None = None
         self._lock = threading.Lock()
 
     @staticmethod
-    def _rapid_installed() -> bool:
-        return importlib.util.find_spec("rapidocr_onnxruntime") is not None
+    def _rapid_module() -> str | None:
+        return next((name for name in _RAPID_MODULES if importlib.util.find_spec(name) is not None), None)
 
     def _tesseract_ready(self) -> bool:
         if importlib.util.find_spec("pytesseract") is None:
@@ -107,14 +139,45 @@ class OcrEngine:
         return bool(self.tesseract_cmd and Path(self.tesseract_cmd).exists()) or shutil.which("tesseract") is not None
 
     def engine_name(self) -> str | None:
-        if self._rapid_installed():
+        if self._rapid_module() and self._rapid_error is None:
             return "rapidocr"
         if self._tesseract_ready():
             return "tesseract"
-        return None
+        return "rapidocr" if self._rapid_module() else None
 
     def available(self) -> bool:
         return self.engine_name() is not None
+
+    def warm_up(self) -> None:
+        """Load the OCR models ahead of the first "what's on my screen" (about 1-2 s saved)."""
+        if self._rapid_module():
+            try:
+                self._load_rapid()
+            except ActionError as exc:
+                log.warning("Screen reading unavailable: %s", exc.message)
+
+    def _load_rapid(self):
+        with self._lock:
+            if self._rapid is not None:
+                return self._rapid
+            if self._rapid_error is not None:
+                raise self._rapid_error
+            module = self._rapid_module()
+            started = time.time()
+            try:
+                if module == "rapidocr_onnxruntime":
+                    from rapidocr_onnxruntime import RapidOCR
+                else:
+                    from rapidocr import RapidOCR  # type: ignore[no-redef]
+                self._rapid = RapidOCR()
+            except Exception as exc:  # noqa: BLE001 - DLL, numpy ABI or model-download errors on import/start
+                log.exception("RapidOCR could not start")
+                self._rapid_error = ActionError(
+                    "OCR_UNAVAILABLE", f"Screen reading couldn't start ({type(exc).__name__}). {_startup_hint(exc)}"
+                )
+                raise self._rapid_error from exc
+            log.info("Loaded OCR engine %s in %.1fs", module, time.time() - started)
+            return self._rapid
 
     def read(self, image_path: Path) -> tuple[list[OcrLine], tuple[int, int]]:
         """Returns (lines with confidence >= MIN_CONFIDENCE, (width, height))."""
@@ -122,35 +185,33 @@ class OcrEngine:
 
         with Image.open(image_path) as img:
             size = img.size
-        engine = self.engine_name()
-        if engine is None:
+        if self.engine_name() is None:
             raise ActionError(
                 "OCR_UNAVAILABLE", "Screen reading isn't installed. Run: pip install rapidocr_onnxruntime"
             )
         started = time.time()
-        lines = self._read_rapid(image_path) if engine == "rapidocr" else self._read_tesseract(image_path)
+        engine = "rapidocr"
+        try:
+            if not self._rapid_module():
+                raise ActionError("OCR_UNAVAILABLE", "RapidOCR isn't installed.")
+            lines = self._read_rapid(image_path)
+        except ActionError as exc:
+            if exc.code != "OCR_UNAVAILABLE" or not self._tesseract_ready():
+                raise
+            engine = "tesseract"
+            lines = self._read_tesseract(image_path)
         log.info("OCR (%s) found %d lines in %.2fs", engine, len(lines), time.time() - started)
         return [line for line in lines if line.confidence >= MIN_CONFIDENCE], size
 
     def _read_rapid(self, image_path: Path) -> list[OcrLine]:
+        engine = self._load_rapid()
         with self._lock:
-            if self._rapid is None:
-                from rapidocr_onnxruntime import RapidOCR
-
-                self._rapid = RapidOCR()
             try:
-                result, _elapsed = self._rapid(str(image_path))
+                result = engine(str(image_path))
             except Exception as exc:  # noqa: BLE001 - model/runtime errors become a typed failure
                 log.exception("RapidOCR failed")
                 raise ActionError("OCR_FAILED", "I couldn't read the screen.") from exc
-        lines = []
-        for box, text, score in result or []:
-            xs = [int(p[0]) for p in box]
-            ys = [int(p[1]) for p in box]
-            lines.append(
-                OcrLine(str(text).strip(), float(score), min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
-            )
-        return [line for line in lines if line.text]
+        return rapid_lines(result)
 
     def _read_tesseract(self, image_path: Path) -> list[OcrLine]:
         import pytesseract

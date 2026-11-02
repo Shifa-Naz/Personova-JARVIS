@@ -280,6 +280,57 @@ def event_intent(s: str) -> Match | None:
     return None
 
 
+# ================================================================= briefing, today's schedule, news, machine status
+# Full-phrase matches only, so "what's the news about the election" still goes to the web answer.
+_TODAY = r"(?: for)?(?: today| this morning| right now)?"
+_BRIEFING = re.compile(
+    r"brief me|(?:give me |read me |start )?(?:my |the |a )?(?:daily |morning )?briefing|good morning|"
+    r"(?:what's|what is|whats|how's|how is) my day(?: looking| look like| like)?|how does my day look"
+)
+_SCHEDULE = re.compile(
+    rf"(?:what's|what is|whats|show me|tell me|read me|give me)? ?(?:my |today's |the )?(?:schedule|agenda|plan|plans)"
+    rf"{_TODAY}|what's scheduled{_TODAY}|what is scheduled{_TODAY}|whats scheduled{_TODAY}|"
+    rf"what (?:tasks|events|meetings) (?:are|do i have) (?:scheduled|planned|due|on){_TODAY}|"
+    rf"what (?:do i have|have i got|is there|is on|'s on)(?: scheduled| planned| going on)?(?: for)? today|"
+    r"(?:what's|what is|whats) on (?:my |the )?(?:schedule|agenda|plate) today|anything (?:scheduled |planned )?today"
+)
+_NEWS = re.compile(
+    r"(?:what's|what is|whats|tell me|read me|give me|show me|get me|any)? ?(?:the )?"
+    r"(?:latest |today's |top |recent |new )?(?:tech |technology )?(?:news|headlines)(?: today| in tech| for today)?|"
+    r"(?:what's|what is|whats) (?:new|happening|the latest) in (?:tech|technology)(?: today)?"
+)
+_SYSTEM_STATUS = re.compile(
+    r"(?:what's|what is|whats|give me|show me|tell me|check)? ?(?:my |the )?(?:system|computer|laptop|pc|machine) "
+    r"(?:status|info|information|stats|health|details|report)|how(?:'s| is) my (?:system|computer|laptop|pc|machine)"
+    r"(?: doing| running)?|system check"
+)
+_PROCESSES = re.compile(
+    r"(?:what's|what is|whats|what are the) (?:apps |programs )?running(?: on (?:my|the|this) (?:computer|laptop|pc|system))?|"
+    r"(?:which|what) (?:apps|programs|processes|applications) are (?:using|eating|taking|hogging)(?: up)?(?: the most| so much| all)?"
+    r"(?: of)?(?: my| the)? ?(?:cpu|memory|ram|resources|battery)?|(?:top|running|busiest|heaviest) (?:apps|processes|programs)|"
+    r"what's (?:using|eating|slowing down) (?:my|the) (?:cpu|memory|ram|computer|laptop)"
+)
+_UPTIME = re.compile(
+    r"uptime|how long (?:has|have) (?:my |the |this )?(?:computer|laptop|pc|system|i) been (?:on|running|up)"
+)
+
+
+def briefing_intent(s: str) -> Match | None:
+    if fm(_BRIEFING, s):
+        return Match([step("daily_briefing")], intent="QUESTION")
+    if fm(_NEWS, s):
+        return Match([step("news_headlines")], intent="QUESTION")
+    if fm(_SCHEDULE, s):
+        return Match([step("schedule_today")], intent="QUESTION")
+    if fm(_SYSTEM_STATUS, s):
+        return Match([step("system_information", topic="summary")], intent="QUESTION")
+    if fm(_PROCESSES, s):
+        return Match([step("system_information", topic="processes")], intent="QUESTION")
+    if fm(_UPTIME, s):
+        return Match([step("system_information", topic="uptime")], intent="QUESTION")
+    return None
+
+
 # ================================================================= files: create / copy / rename
 _TEXT_EXT = r"txt|md|csv|json|log|html|css|js|ts|py|c|h|cpp|java|xml|yaml|yml|ini"
 _FILE_CONTENT = re.compile(r" (?:with the text|with text|with content|containing|saying|that says|with) (.+)$")
@@ -327,5 +378,6 @@ def file_ops_intent(s: str) -> Match | None:
 # Storing text (a task title, a note, a memory) never executes it, so these run before the safety
 # filter: "remind me to pay rent" is a reminder, not a payment. File operations run after it.
 # create_file only writes text, like a note, and its phrasing is strict ("file" or a text extension).
-STORAGE_MATCHERS = (create_file_intent, task_intent, event_intent, note_intent, memory_intent)
+# briefing_intent only reads (schedule, news, machine status) and matches whole phrases.
+STORAGE_MATCHERS = (briefing_intent, create_file_intent, task_intent, event_intent, note_intent, memory_intent)
 MATCHERS = (*STORAGE_MATCHERS, file_ops_intent)

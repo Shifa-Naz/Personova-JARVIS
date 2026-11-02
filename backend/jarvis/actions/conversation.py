@@ -10,7 +10,7 @@ from pydantic import Field
 from jarvis.actions.base import ActionError, ActionResult, ActionSpec, Offer, Params, PermissionLevel, PlanStep
 from jarvis.actions.memory import relevant_memories
 from jarvis.ai.provider import AiUnavailable
-from jarvis.nlp.speech import to_speech
+from jarvis.nlp.speech import SpeechStreamer, to_speech
 
 
 class ReplyParams(Params):
@@ -30,10 +30,21 @@ def answer_question(params: QuestionParams, ctx, prepared) -> ActionResult:
         memories = [m["text"] for m in relevant_memories(ctx.store, params.question)]
         if ctx.on_delta is not None:
             parts: list[str] = []
+            # Speak each finished sentence while the model is still writing the rest.
+            streamer = SpeechStreamer() if ctx.on_say is not None else None
             for piece in ctx.ai.answer_stream(params.question, ctx.session.history_list(), memories):
                 parts.append(piece)
                 ctx.on_delta(piece)
+                for sentence in streamer.feed(piece) if streamer else ():
+                    ctx.on_say(sentence)
             text = "".join(parts).strip()
+            if streamer is not None and streamer.said:
+                rest = streamer.finish()
+                if rest:
+                    ctx.on_say(rest)
+                # Everything spoken has been said live; nothing is left for the final response to say.
+                data = {"source": "llm", "speech": "", "speech_exact": True, "spoken_live": True, "markdown": True}
+                return ActionResult(True, text, data=data)
         else:
             text = ctx.ai.answer(params.question, ctx.session.history_list(), memories)
     except AiUnavailable as exc:
@@ -43,9 +54,13 @@ def answer_question(params: QuestionParams, ctx, prepared) -> ActionResult:
                 "Shall I look it up on the web instead?",
                 [PlanStep(action="web_answer", params={"query": params.question})],
             )
-        result = ActionResult.fail(
-            "AI_UNAVAILABLE", "My offline language model isn't available right now.", offer=offer
+        slow = "took longer" in str(exc)
+        message = (
+            "That took too long to answer on this computer."
+            if slow
+            else "My offline language model isn't available right now."
         )
+        result = ActionResult.fail("AI_TIMEOUT" if slow else "AI_UNAVAILABLE", message, offer=offer)
         result.data = {"detail": str(exc)}  # shown in the UI, not spoken
         return result
     return ActionResult(True, text, data={"source": "llm", "speech": to_speech(text), "markdown": True})

@@ -67,6 +67,11 @@ class Synthesizer:
             log.info("Loaded Piper voice %s in %.1fs", self.voice, time.time() - started)
         return self._voice
 
+    def load(self) -> None:
+        """Load the voice ahead of the first reply (warm-up)."""
+        with self._lock:
+            self._load()
+
     def synthesize(self, text: str) -> bytes:
         text = " ".join(text.split())[:MAX_TTS_CHARS]
         if not text:

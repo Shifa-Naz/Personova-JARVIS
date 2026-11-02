@@ -16,6 +16,9 @@ voice/text → speech-to-text → intent rules ─┬→ action plan → validat
 
 | Area | Examples |
 |---|---|
+| Briefing | “Brief me”, “Good morning”, “What's my day like?” read today's events and tasks, the top tech headlines and the battery. Also automatic when you open the laptop lid (see below) |
+| Schedule and news | “What's scheduled today?”, “What do I have today?”, “Latest tech news”, “What's new in tech?” |
+| This computer | “System status”, “How is my laptop doing?”, “Which apps are using the most CPU?”, “How long has my laptop been on?” |
 | Questions | “What is polymorphism?”, “Explain that more simply” (follows the conversation), “How do I write a loop in my preferred language?” |
 | Current information | “What's the weather in Belgaum today?” looks it up on the web and answers with sources |
 | Memory | “Remember that I prefer C++”, “What language do I prefer?”, “What do you remember about me?”, “Forget that I prefer C++” |
@@ -24,7 +27,7 @@ voice/text → speech-to-text → intent rules ─┬→ action plan → validat
 | Notes | “Take a note ask Ravi for repo access”, “Search notes for repo”, “Add push the fix to the Ravi note” |
 | Screen | “What's on my screen?”, “Read my screen”, “What does the error on my screen say?” |
 | Apps and web | “Open Chrome”, “Search for C++ tutorials”, “Search Python tutorials and open the first result”, “Play Believer on YouTube” |
-| Files | “Create folder College”, “Copy report.pdf to Documents”, “Rename report.pdf to final”, “Open my resume”, “Delete report.pdf” (asks first, then moves it to the trash) |
+| Files | “Create greetings.txt saying hello”, “Create folder College”, “Copy report.pdf to Documents”, “Rename report.pdf to final”, “Open my resume”, “Delete report.pdf” (asks first, then moves it to the trash) |
 | Media and system | “Play Believer” (local first, then offers YouTube), “Pause”, “Volume up”, “What's the battery?”, “Take a screenshot” |
 | Refused | “Run the command …”, “Install …”, payments, sending messages, shutting down |
 
@@ -77,13 +80,34 @@ offline speech recognition (faster-whisper) and a JARVIS tab open in your browse
 are stored by the backend (in the data folder). Anything the old version kept only in your browser is imported
 automatically the first time a page opens.
 
+### 4. Start everything with one command (recommended for demos)
+
+```bash
+cd backend
+python launch.py                            # Ollama (if needed) + backend + frontend + the JARVIS window
+python launch.py --install-autostart        # optional: start JARVIS by itself every time you log in
+```
+
+The launcher opens JARVIS in its own Chrome (or Edge) app window that can listen and speak **without being clicked**:
+say “Jarvis, …” straight away. Normal browser tabs block sound and the microphone level until you click the page once;
+JARVIS shows a hint when that happens. The launcher keeps the backend and frontend running and reopens the window after
+the laptop wakes up if it was closed. Stop it with Ctrl+C (or `--remove-autostart` to undo the login start).
+
+**Briefing when you open the laptop:** when the laptop wakes from sleep, or you unlock the screen after it was locked
+for 20 seconds or more, JARVIS shows and reads today's schedule and the top tech headlines. If the lock screen is up
+it waits until you've unlocked. At login (with `--install-autostart`) you get the same briefing. Turn it off under
+Voice and AI, or with `JARVIS_BRIEFING_ON_WAKE=false`.
+
 ### Platform notes
 
 - **Linux:** needs `xdg-open`, plus `wpctl` (PipeWire) or `pactl` for volume. `playerctl` is optional (`gdbus` MPRIS is the
   fallback). Screen capture on Wayland uses the desktop's screenshot portal, which may ask for permission the first time.
   Typing and clicking for you are unavailable on Wayland, and JARVIS says so.
 - **Windows:** apps launch via ShellExecute (`chrome`, `ms-settings:` …). Media and volume use the media keys, and an exact
-  volume level is approximate.
+  volume level is approximate. Screen capture tries Pillow, then `mss` (optional, `pip install mss`), then a built-in
+  PowerShell capture. If “What's on my screen?” fails, run `python run.py --check`: the **Screen OCR** and **Screen
+  capture** lines run a real test and name the fix (for example, installing the Microsoft Visual C++ Redistributable,
+  which the OCR engine needs).
 - Add your own apps with `JARVIS_CONFIG_FILE` (see `backend/jarvis.config.example.json`).
 
 ## Development

@@ -8,7 +8,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jarvis.ai.provider import AiProvider
@@ -18,6 +18,13 @@ if TYPE_CHECKING:
     from jarvis.platform.base import PlatformAdapter
     from jarvis.storage.store import JsonStore
     from jarvis.vision.ocr import OcrEngine
+
+
+# Measured with llama3.2 on the i5-1240P: an uncached prompt is read at ~45 tokens/s, so every 100 tokens of history
+# delay the first word by ~2 s. ~900 chars (~220 tokens) keeps follow-ups like "explain that more simply" working.
+HISTORY_CHARS = 900
+TURN_CHARS = 300
+TURN_STORE_CHARS = 2000
 
 
 @dataclass
@@ -39,12 +46,27 @@ class SessionContext:
 
     def add_turn(self, user: str, assistant: str) -> None:
         if user:
-            self.history.append({"role": "user", "content": user})
+            self.history.append({"role": "user", "content": user[:TURN_STORE_CHARS]})
         if assistant:
-            self.history.append({"role": "assistant", "content": assistant})
+            self.history.append({"role": "assistant", "content": assistant[:TURN_STORE_CHARS]})
 
-    def history_list(self) -> list[dict[str, str]]:
-        return list(self.history)
+    def history_list(self, max_chars: int = HISTORY_CHARS) -> list[dict[str, str]]:
+        """Recent turns for the model, newest first within a size budget, each turn shortened.
+
+        On a CPU every earlier reply sent back costs time: a conversation holding a briefing, the news and a
+        process list made a simple question time out (90 s).
+        """
+        out: list[dict[str, str]] = []
+        used = 0
+        for message in reversed(self.history):
+            content = message["content"]
+            if len(content) > TURN_CHARS:
+                content = content[:TURN_CHARS].rstrip() + " …"
+            if out and used + len(content) > max_chars:
+                break
+            out.append({**message, "content": content})
+            used += len(content)
+        return out[::-1]
 
 
 class SessionStore:
@@ -68,6 +90,10 @@ class Connectivity:
         self.ttl_s = ttl_s
         self._cache: tuple[float, bool] = (0.0, False)
         self.override: bool | None = None  # tests
+
+    def invalidate(self) -> None:
+        """Forget the cached answer (after waking from sleep the network state has changed)."""
+        self._cache = (0.0, False)
 
     def online(self) -> bool:
         if self.override is not None:
@@ -98,5 +124,8 @@ class ExecContext:
     session: SessionContext
     ocr: OcrEngine | None = None
     store: JsonStore | None = None
+    news: Any = None  # NewsService
     # Set while a streaming request runs: answer pieces are passed here as the model writes them.
     on_delta: Callable[[str], None] | None = None
+    # Set while a streaming request runs: finished spoken sentences, so the voice can start before the answer ends.
+    on_say: Callable[[str], None] | None = None

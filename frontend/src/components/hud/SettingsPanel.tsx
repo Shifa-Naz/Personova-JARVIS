@@ -102,6 +102,17 @@ const SettingsPanel = ({ settings, capabilities, activeStt, activeTts, wakeListe
       </div>
       <div>
         <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="text-sm font-medium text-foreground">Briefing when I open the laptop</p>
+          <Switch checked={settings.briefing} onCheckedChange={(v) => onChange({ briefing: v })} aria-label="Briefing on wake-up" />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          {settings.briefing
+            ? "When the laptop wakes up or you unlock the screen, JARVIS reads today's schedule and the top tech headlines."
+            : "Off. Say “brief me” any time."}
+        </p>
+      </div>
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-3">
           <p className="text-sm font-medium text-foreground">Spoken replies</p>
           <Switch checked={settings.voice} onCheckedChange={(v) => onChange({ voice: v })} aria-label="Spoken replies" />
         </div>

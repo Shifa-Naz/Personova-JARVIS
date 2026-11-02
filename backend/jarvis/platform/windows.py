@@ -6,6 +6,7 @@ Windows-only packages are required.
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
@@ -24,6 +25,23 @@ VK = {
     "up": 0xAF,
 }
 KEYEVENTF_KEYUP = 0x0002
+
+log = logging.getLogger(__name__)
+
+# Built-in fallback capture (no extra packages). DPI-aware so a 125-150 % scaled display is captured whole.
+# The script is a constant; the destination path is passed through an environment variable, never spliced in.
+_PS_CAPTURE = r"""
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class JarvisDpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }'
+[JarvisDpi]::SetProcessDPIAware() | Out-Null
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size)
+$bmp.Save($env:JARVIS_SHOT_PATH, [System.Drawing.Imaging.ImageFormat]::Png)
+$g.Dispose(); $bmp.Dispose()
+"""
 
 
 def _tap(vk: int, times: int = 1) -> None:
@@ -74,6 +92,54 @@ class WindowsAdapter(PlatformAdapter):
                 errors.append(str(exc))
         detail = f" ({errors[-1]})" if errors else ""
         raise ActionError("APP_NOT_INSTALLED", f"{app.display_name} doesn't seem to be installed{detail}.")
+
+    def screenshot(self, dest: Path) -> Path:
+        """Pillow first, then mss (if installed), then PowerShell. Each failure is logged, the last one reported."""
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        errors: list[str] = []
+        for name, capture in (("pillow", self._grab_pillow), ("mss", self._grab_mss), ("powershell", self._grab_ps)):
+            try:
+                capture(dest)
+                if dest.exists() and dest.stat().st_size > 0:
+                    return dest
+                errors.append(f"{name}: no image")
+            except Exception as exc:  # noqa: BLE001 - try the next capture method
+                log.warning("Screen capture with %s failed: %s", name, exc)
+                errors.append(f"{name}: {exc}")
+        raise ActionError("SCREENSHOT_UNAVAILABLE", f"I couldn't capture the screen ({errors[-1]}).")
+
+    @staticmethod
+    def _grab_pillow(dest: Path) -> None:
+        from PIL import ImageGrab
+
+        ImageGrab.grab(all_screens=False).save(dest)
+
+    @staticmethod
+    def _grab_mss(dest: Path) -> None:
+        import mss  # optional
+        import mss.tools
+
+        with mss.mss() as sct:
+            shot = sct.grab(sct.monitors[1])
+            mss.tools.to_png(shot.rgb, shot.size, output=str(dest))
+
+    @staticmethod
+    def _grab_ps(dest: Path) -> None:
+        exe = shutil.which("powershell") or shutil.which("pwsh")
+        if not exe:
+            raise RuntimeError("PowerShell not found")
+        env = {**os.environ, "JARVIS_SHOT_PATH": str(dest)}
+        result = subprocess.run(  # noqa: S603 - fixed argv, constant script
+            [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", _PS_CAPTURE],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env=env,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError((result.stderr or "PowerShell capture failed").strip().splitlines()[-1][:200])
 
     def media(self, command: str) -> str:
         # Windows has no separate play/pause keys; the toggle covers both.

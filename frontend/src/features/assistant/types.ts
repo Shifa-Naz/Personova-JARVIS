@@ -57,6 +57,8 @@ export interface ExecResponse {
   response_type: "conversation" | "action" | "confirmation" | "clarification" | "error";
   /** Shorter, plain-text version of `reply` for the voice (no code, no links). */
   speech: string;
+  /** True when the answer was already spoken sentence by sentence while it streamed; `speech` holds what's left. */
+  spoken_live?: boolean;
 }
 
 export interface Capabilities {
@@ -90,6 +92,36 @@ export interface Telemetry {
   uptime_s: number;
   os: string;
   hostname: string;
+  /** Busiest apps, when requested with ?processes=1. */
+  processes?: ProcessInfo[];
+}
+
+export interface ProcessInfo {
+  name: string;
+  cpu_percent: number;
+  memory: number;
+  count: number;
+}
+
+export interface Headline {
+  title: string;
+  source: string;
+  url: string;
+  published: string;
+}
+
+export interface Briefing {
+  reply: string;
+  speech: string;
+  data: { schedule: unknown; news: Headline[] };
+}
+
+/** Pushed by the backend (long-poll). `briefing` arrives when the laptop wakes up or the screen is unlocked. */
+export interface JarvisEvent extends Briefing {
+  type: "briefing";
+  reason: "wake" | "unlock" | "start";
+  seq: number;
+  ts: number;
 }
 
 export interface LogEvent {

@@ -128,7 +128,9 @@ export function assistantReducer(state: AssistantState, event: AssistantEvent): 
           ? "ERROR"
           : r.status === "cancelled" || r.status === "needs_clarification"
             ? restPhase(next)
-            : "SUCCESS";
+            : state.phase === "SPEAKING"
+              ? "SPEAKING" // the answer is already being read out sentence by sentence
+              : "SUCCESS";
       return next;
     }
     case "SPEAK_START":

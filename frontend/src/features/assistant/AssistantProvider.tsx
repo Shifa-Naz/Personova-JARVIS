@@ -2,27 +2,44 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type Rea
 import { useNavigate } from "react-router-dom";
 import { ApiError, BackendUnreachable, jarvis } from "@/lib/api";
 import { DATA_CHANGED_EVENT } from "@/lib/storage";
-import { AssistantContext, type AssistantApi, type AssistantSettings } from "./context";
+import { AssistantContext, type AssistantApi, type AssistantSettings, type BriefingView } from "./context";
 import { applyLocalCommand, matchLocalCommand } from "./localCommands";
 import { assistantReducer, initialState } from "./machine";
 import {
+  audioBlocked,
   browserSttSupported,
+  enqueueSpeech,
+  installAudioUnlock,
+  isSpeaking,
   openMic,
   recognizeOnce,
   recordUtterance,
   SpeechError,
   speak,
+  speechDrained,
   stopSpeaking,
   type SttEngine,
   type TtsEngine,
 } from "./speech";
-import type { ExecResponse } from "./types";
+import type { Briefing, ExecResponse } from "./types";
 import { matchWake } from "./wake";
 
 const SETTINGS_KEY = "jarvis_assistant_settings";
 /** Below this Whisper confidence, JARVIS asks you to check the text instead of running it. */
 const LOW_STT_CONFIDENCE = 0.5;
-const DEFAULT_SETTINGS: AssistantSettings = { stt: "auto", voice: true, tts: "auto", wake: true };
+const DEFAULT_SETTINGS: AssistantSettings = { stt: "auto", voice: true, tts: "auto", wake: true, briefing: true };
+const BRIEFING_SEEN_KEY = "jarvis_briefing_seen";
+
+/** Resolves after `ms`, or at once when `signal` aborts (retry back-off, not synchronisation). */
+function pause(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(t);
+      resolve();
+    }, { once: true });
+  });
+}
 
 function loadSettings(): AssistantSettings {
   try {
@@ -97,33 +114,51 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const activeTtsRef = useRef(activeTts);
   activeTtsRef.current = activeTts;
 
+  const speakOptions = useCallback(
+    () => ({
+      engine: activeTtsRef.current ?? ("browser" as const),
+      fetchAudio: (t: string) => jarvis.speak(t),
+      onStart: () => dispatch({ type: "SPEAK_START" }),
+      onLevel: (l: number) => (levelRef.current = l),
+    }),
+    [],
+  );
+
   /** Speak with the active engine; the visualizer follows the real output level. */
   const voiceOut = useCallback(async (text: string) => {
-    const engine = activeTtsRef.current;
-    if (!engine || !text) return;
-    await speak(text, {
-      engine,
-      fetchAudio: (t) => jarvis.speak(t),
-      onStart: () => dispatch({ type: "SPEAK_START" }),
-      onLevel: (l) => (levelRef.current = l),
-    });
+    if (!activeTtsRef.current || !text) return;
+    await speak(text, speakOptions());
     levelRef.current = 0;
-  }, []);
+  }, [speakOptions]);
+
+  // Sentences of a streaming answer are spoken as they arrive (the backend sends them as "say" events).
+  const spokeLiveRef = useRef(false);
+  const sayLive = useCallback((sentence: string) => {
+    if (!activeTtsRef.current) return;
+    spokeLiveRef.current = true;
+    void enqueueSpeech(sentence, speakOptions());
+  }, [speakOptions]);
 
   // ---------------------------------------------------------------- responding
   const listenRef = useRef<() => Promise<void>>(async () => {});
 
-  const respond = useCallback(async (text: string, opts: { fromVoice?: boolean; expectAnswer?: boolean }) => {
+  const respond = useCallback(async (text: string, opts: { fromVoice?: boolean; expectAnswer?: boolean; live?: boolean }) => {
     // The turn's work is done; speaking must not block barge-in (Space interrupts).
     busyRef.current = false;
-    if (activeTtsRef.current && text) {
+    if (activeTtsRef.current && opts.live) {
+      // Most of the answer is already queued; add what's left and wait for the voice to finish.
+      if (text) void enqueueSpeech(text, speakOptions());
+      await speechDrained();
+      levelRef.current = 0;
+      dispatch({ type: "SPEAK_END" });
+    } else if (activeTtsRef.current && text) {
       await voiceOut(text);
       dispatch({ type: "SPEAK_END" });
     }
     // Continue hands-free when JARVIS asked a question. Deferred to the next task so the
     // current turn (and its busy flag) has fully finished before listening again.
     if (opts.fromVoice && opts.expectAnswer) setTimeout(() => void listenRef.current(), 0);
-  }, [voiceOut]);
+  }, [speakOptions, voiceOut]);
 
   const handleExec = useCallback(
     async (resp: ExecResponse, fromVoice: boolean, listenAfter = false) => {
@@ -133,7 +168,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       changed.forEach((kind) => window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT, { detail: kind })));
       // Speak only the final user-facing response, in its short spoken form.
       const asks = resp.status === "needs_confirmation" || resp.status === "needs_clarification";
-      await respond(resp.speech || resp.reply, { fromVoice, expectAnswer: asks || listenAfter });
+      const live = Boolean(resp.spoken_live) && spokeLiveRef.current;
+      spokeLiveRef.current = false;
+      await respond(live ? resp.speech : resp.speech || resp.reply, { fromVoice, expectAnswer: asks || listenAfter, live });
     },
     [respond],
   );
@@ -141,12 +178,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   /** Show answers as they are written; fall back to a plain request if streaming isn't possible. */
   const executeStreaming = useCallback(async (planId: string) => {
     try {
-      return await jarvis.executeStream(planId, (text) => dispatch({ type: "STREAM_DELTA", text }));
+      spokeLiveRef.current = false;
+      return await jarvis.executeStream(planId, (text) => dispatch({ type: "STREAM_DELTA", text }), sayLive);
     } catch (err) {
       if (err instanceof BackendUnreachable) throw err;
+      if (spokeLiveRef.current) throw err; // the plan already ran; never run it twice
       return jarvis.execute(planId);
     }
-  }, []);
+  }, [sayLive]);
 
   const fail = useCallback((err: unknown) => {
     if (err instanceof BackendUnreachable) {
@@ -304,26 +343,43 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   // ---------------------------------------------------------------- wake phrase ("Jarvis, are you up?")
   const [wakeListening, setWakeListening] = useState(false);
   const [wakeError, setWakeError] = useState<string | null>(null);
+  const [audioLocked, setAudioLocked] = useState(false);
   const wakeAvailable = settings.wake && activeStt === "local";
   // Only while JARVIS is idle: never while it speaks (it would hear itself) or while a command is in progress.
   const wakeEligible = wakeAvailable && !wakeError && state.connected && state.phase === "IDLE";
 
+  // Without the launcher, Chrome holds audio back until the first click or key press anywhere on the page.
+  useEffect(() => installAudioUnlock(() => setAudioLocked(audioBlocked())), []);
+
   useEffect(() => {
     if (!wakeEligible) return;
     const controller = new AbortController();
+    const { signal } = controller;
     let mic: Awaited<ReturnType<typeof openMic>> | null = null;
     void (async () => {
-      try {
-        mic = await openMic();
-        if (controller.signal.aborted) return;
-        setWakeListening(true);
-        while (!controller.signal.aborted) {
+      let failures = 0;
+      while (!signal.aborted) {
+        try {
+          // A new microphone session after the old one died (unplugged, or the laptop slept and woke up).
+          if (!mic || !mic.alive()) {
+            mic?.close();
+            mic = await openMic();
+            if (signal.aborted) break;
+          }
+          if (mic.blocked()) {
+            setAudioLocked(true);
+            await pause(1000, signal);
+            continue;
+          }
+          setAudioLocked(false);
+          setWakeListening(true);
           // Short bursts: "Jarvis" alone is ~0.5 s, "Jarvis, <command>" up to ~8 s. Silence restarts the recorder.
-          const blob = await recordUtterance({ mic, signal: controller.signal, noSpeechMs: 5000, silenceMs: 1400, maxSpeechMs: 12000 });
-          if (!blob || controller.signal.aborted) continue;
+          const blob = await recordUtterance({ mic, signal, noSpeechMs: 5000, silenceMs: 1200, maxSpeechMs: 12000 });
+          failures = 0;
+          if (!blob || signal.aborted) continue;
           const heard = await jarvis.transcribe(blob, "wake");
           const hit = matchWake(heard.text);
-          if (hit && !controller.signal.aborted && !busyRef.current && !listeningRef.current) {
+          if (hit && !signal.aborted && !busyRef.current && !listeningRef.current) {
             controller.abort();
             mic.close();
             mic = null;
@@ -331,19 +387,118 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
             else void submit(hit.utterance, { fromVoice: true, listenAfter: hit.listenAfter });
             return;
           }
+        } catch (err) {
+          if (signal.aborted) break;
+          if (err instanceof SpeechError && err.code === "MIC_DENIED") {
+            setWakeError("Microphone access is blocked, so the wake phrase is off. Allow the microphone for this page.");
+            break;
+          }
+          if (err instanceof ApiError && err.code === "STT_UNAVAILABLE") {
+            setWakeError("Offline speech recognition isn't installed.");
+            break;
+          }
+          // Anything else is temporary (mic busy, backend restarting, waking from sleep): try again shortly.
+          mic?.close();
+          mic = null;
+          setWakeListening(false);
+          failures += 1;
+          await pause(Math.min(10000, 1000 * failures), signal);
         }
-      } catch (err) {
-        if (controller.signal.aborted) return;
-        if (err instanceof SpeechError && err.code === "MIC_DENIED") setWakeError("Microphone access is blocked, so the wake phrase is off.");
-        else if (err instanceof ApiError && err.code === "STT_UNAVAILABLE") setWakeError("Offline speech recognition isn't installed.");
-        else if (!(err instanceof BackendUnreachable)) setWakeError("The wake listener stopped. Turn it off and on to retry.");
-      } finally {
-        mic?.close();
-        setWakeListening(false);
       }
+      mic?.close();
+      setWakeListening(false);
     })();
     return () => controller.abort();
   }, [askToCheck, wakeEligible, submit]);
+
+  // ---------------------------------------------------------------- briefing (lid open, start-up, on request)
+  const [briefing, setBriefing] = useState<BriefingView | null>(null);
+  const pendingBriefing = useRef<BriefingView | null>(null);
+
+  const deliverBriefing = useCallback(
+    (b: Briefing, reason: BriefingView["reason"]) => {
+      const view: BriefingView = { reply: b.reply, speech: b.speech, at: Date.now(), reason };
+      setBriefing(view);
+      // Never talk over a command in progress; it is said as soon as JARVIS is idle again.
+      if (busyRef.current || listeningRef.current || stateRef.current.phase !== "IDLE") {
+        pendingBriefing.current = view;
+        return;
+      }
+      stopSpeaking();
+      dispatch({ type: "REPLY", text: view.reply });
+      void respond(view.speech, {});
+    },
+    [respond],
+  );
+
+  useEffect(() => {
+    const view = pendingBriefing.current;
+    if (!view || state.phase !== "IDLE" || busyRef.current) return;
+    pendingBriefing.current = null;
+    dispatch({ type: "REPLY", text: view.reply });
+    void respond(view.speech, {});
+  }, [state.phase, respond]);
+
+  const requestBriefing = useCallback(async () => {
+    try {
+      deliverBriefing(await jarvis.briefing(), "request");
+    } catch (err) {
+      fail(err);
+    }
+  }, [deliverBriefing, fail]);
+
+  // Started by the launcher at login (?briefing=1): brief once the backend is reachable.
+  const startBriefingDone = useRef(false);
+  useEffect(() => {
+    if (!state.connected || startBriefingDone.current) return;
+    startBriefingDone.current = true;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("briefing") !== "1" || !settings.briefing) return;
+    params.delete("briefing");
+    const rest = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (rest ? `?${rest}` : "") + window.location.hash);
+    void jarvis.briefing().then((b) => deliverBriefing(b, "start")).catch(() => undefined);
+  }, [state.connected, settings.briefing, deliverBriefing]);
+
+  // Lid-open briefings are pushed by the backend; long-poll for them while connected.
+  const briefingOn = settings.briefing;
+  useEffect(() => {
+    if (!state.connected || !briefingOn) return;
+    const controller = new AbortController();
+    void (async () => {
+      let after = -1;
+      let seenTs = 0;
+      try {
+        seenTs = Number(sessionStorage.getItem(BRIEFING_SEEN_KEY) ?? 0);
+      } catch {
+        seenTs = 0;
+      }
+      while (!controller.signal.aborted) {
+        try {
+          const r = await jarvis.events(after, after < 0 ? 0 : 25);
+          if (controller.signal.aborted) return;
+          if (r.seq < after) {
+            after = -1; // the backend restarted and counts from zero again
+            continue;
+          }
+          for (const e of r.events) {
+            if (e.type !== "briefing" || e.ts <= seenTs) continue;
+            seenTs = e.ts;
+            try {
+              sessionStorage.setItem(BRIEFING_SEEN_KEY, String(e.ts));
+            } catch {
+              // per-tab convenience only
+            }
+            deliverBriefing(e, e.reason);
+          }
+          after = r.seq;
+        } catch {
+          await pause(3000, controller.signal); // backend restarting or the laptop just woke up
+        }
+      }
+    })();
+    return () => controller.abort();
+  }, [state.connected, briefingOn, deliverBriefing]);
 
   const cancel = useCallback(() => {
     listenAbort.current?.abort();
@@ -357,12 +512,14 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
     else void listen();
   }, [listen]);
 
-  // Brief SUCCESS/ERROR flash when not speaking (purely visual).
+  // Return to rest after a SUCCESS/ERROR flash once nothing is being said. Also a safety net: if a reply was
+  // never spoken (no audio, empty text), the wake listener must not stay switched off.
   useEffect(() => {
-    if ((state.phase === "SUCCESS" || state.phase === "ERROR") && !activeTts) {
-      const t = setTimeout(() => dispatch({ type: "SETTLE" }), 1600);
-      return () => clearTimeout(t);
-    }
+    if (state.phase !== "SUCCESS" && state.phase !== "ERROR") return;
+    const t = setInterval(() => {
+      if (!isSpeaking() && !busyRef.current) dispatch({ type: "SETTLE" });
+    }, activeTts ? 2500 : 1600);
+    return () => clearInterval(t);
   }, [state.phase, activeTts]);
 
   // Global shortcuts: Space = push-to-talk toggle, Escape = cancel.
@@ -410,6 +567,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       wakeAvailable,
       wakeListening,
       wakeError,
+      audioLocked,
+      briefing,
+      requestBriefing,
       say: async (text: string) => {
         await voiceOut(text);
         dispatch({ type: "SPEAK_END" });
@@ -430,6 +590,9 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
       wakeAvailable,
       wakeListening,
       wakeError,
+      audioLocked,
+      briefing,
+      requestBriefing,
       voiceOut,
       submit,
       listen,

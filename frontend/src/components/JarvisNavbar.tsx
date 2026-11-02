@@ -35,7 +35,7 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
   }`;
 
 const JarvisNavbar = () => {
-  const { state, reconnect, wakeListening } = useAssistant();
+  const { state, reconnect, wakeListening, audioLocked } = useAssistant();
   const [open, setOpen] = useState(false);
 
   return (
@@ -60,7 +60,11 @@ const JarvisNavbar = () => {
               title={wakeListening ? `Listening for “${WAKE_PHRASE}”` : PHASES[state.phase].label}
             >
               <span className="h-2 w-2 rounded-full" style={{ background: phaseColor(state.phase) }} />
-              {state.phase === "IDLE" && wakeListening ? (
+              {audioLocked ? (
+                <>
+                  <Ear className="h-4 w-4 text-jarvis-ember" aria-hidden /> Click anywhere so I can hear you
+                </>
+              ) : state.phase === "IDLE" && wakeListening ? (
                 <>
                   <Ear className="h-4 w-4 text-primary" aria-hidden /> Listening for your call
                 </>

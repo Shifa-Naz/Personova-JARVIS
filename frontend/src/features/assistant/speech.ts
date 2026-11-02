@@ -24,6 +24,10 @@ export interface MicSession {
   stream: MediaStream;
   /** Current input level, 0..1 (RMS, lightly scaled). */
   level(): number;
+  /** False once the device went away (unplugged, or the laptop slept); open a new session then. */
+  alive(): boolean;
+  /** True while the browser holds audio back until the page is clicked (no level readings). */
+  blocked(): boolean;
   close(): void;
 }
 
@@ -44,7 +48,8 @@ export async function openMic(): Promise<MicSession> {
     }
     throw new SpeechError("MIC_UNAVAILABLE", "I couldn't find a working microphone.");
   }
-  const ctx = new AudioContext();
+  const ctx = tracked(new AudioContext());
+  void resumeQuick(ctx);
   const source = ctx.createMediaStreamSource(stream);
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 1024;
@@ -58,8 +63,15 @@ export async function openMic(): Promise<MicSession> {
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       return Math.min(1, Math.sqrt(sum / buf.length) * 4);
     },
+    alive() {
+      return ctx.state !== "closed" && stream.getAudioTracks().some((t) => t.readyState === "live" && t.enabled);
+    },
+    blocked() {
+      return ctx.state === "suspended";
+    },
     close() {
       stream.getTracks().forEach((t) => t.stop());
+      contexts.delete(ctx);
       void ctx.close();
     },
   };
@@ -224,12 +236,50 @@ export function ttsSupported(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window;
 }
 
+// Chrome starts every AudioContext "suspended" until the page gets a click or key press (autoplay policy), and
+// resume() then never settles. Nothing here may wait on it forever: a blocked context falls back or reports itself.
+// The JARVIS launcher opens the app with --autoplay-policy=no-user-gesture-required, so it is never blocked there.
+const RESUME_WAIT_MS = 400;
+const contexts = new Set<AudioContext>();
+
+function tracked(ctx: AudioContext): AudioContext {
+  contexts.add(ctx);
+  return ctx;
+}
+
+async function resumeQuick(ctx: AudioContext): Promise<boolean> {
+  if (ctx.state === "running") return true;
+  await Promise.race([ctx.resume().catch(() => undefined), new Promise((r) => setTimeout(r, RESUME_WAIT_MS))]);
+  return (ctx.state as AudioContextState) === "running";
+}
+
+/** True while the browser is holding audio back until the user interacts with the page. */
+export function audioBlocked(): boolean {
+  for (const ctx of contexts) if (ctx.state === "suspended") return true;
+  return false;
+}
+
+/** Resume all audio on the first click or key press. Returns a cleanup function. */
+export function installAudioUnlock(onUnlocked?: () => void): () => void {
+  const unlock = () => {
+    contexts.forEach((ctx) => {
+      if (ctx.state === "suspended") void ctx.resume().then(() => onUnlocked?.());
+    });
+  };
+  window.addEventListener("pointerdown", unlock, true);
+  window.addEventListener("keydown", unlock, true);
+  return () => {
+    window.removeEventListener("pointerdown", unlock, true);
+    window.removeEventListener("keydown", unlock, true);
+  };
+}
+
 let audioCtx: AudioContext | null = null;
 let currentSource: AudioBufferSourceNode | null = null;
 let speakGeneration = 0;
 
 function audioContext(): AudioContext {
-  audioCtx ??= new AudioContext();
+  audioCtx ??= tracked(new AudioContext());
   return audioCtx;
 }
 
@@ -245,7 +295,6 @@ function pickVoice(): SpeechSynthesisVoice | undefined {
 function speakBrowser(text: string, onStart?: () => void): Promise<void> {
   if (!ttsSupported()) return Promise.resolve();
   return new Promise((resolve) => {
-    window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const voice = pickVoice();
     if (voice) u.voice = voice;
@@ -258,15 +307,8 @@ function speakBrowser(text: string, onStart?: () => void): Promise<void> {
   });
 }
 
-async function speakLocal(text: string, opts: SpeakOptions, generation: number): Promise<"played" | "cancelled"> {
-  if (!opts.fetchAudio) throw new Error("no audio source");
+function playBuffer(buffer: AudioBuffer, opts: SpeakOptions): Promise<void> {
   const ctx = audioContext();
-  if (ctx.state === "suspended") await ctx.resume();
-  const wav = await opts.fetchAudio(text);
-  if (generation !== speakGeneration) return "cancelled"; // interrupted while synthesizing
-  const buffer = await ctx.decodeAudioData(await wav.arrayBuffer());
-  if (generation !== speakGeneration) return "cancelled";
-
   const source = ctx.createBufferSource();
   source.buffer = buffer;
   const analyser = ctx.createAnalyser();
@@ -290,12 +332,96 @@ async function speakLocal(text: string, opts: SpeakOptions, generation: number):
       cancelAnimationFrame(raf);
       opts.onLevel?.(0);
       if (currentSource === source) currentSource = null;
-      resolve("played");
+      resolve();
     };
     opts.onStart?.();
     source.start();
     meter();
   });
+}
+
+// ------------------------------------------------------------------ speech queue
+// Sentences are synthesized as soon as they are queued and played in order, so the next one is ready when the
+// current one ends. Answers start speaking after their first sentence instead of after the whole text.
+interface QueueItem {
+  text: string;
+  opts: SpeakOptions;
+  generation: number;
+  audio: Promise<AudioBuffer | null> | null;
+  done: (engine: TtsEngine | "none") => void;
+}
+
+const queue: QueueItem[] = [];
+let pumping = false;
+const drainWaiters: Array<() => void> = [];
+
+async function synthesize(text: string, opts: SpeakOptions): Promise<AudioBuffer | null> {
+  if (!opts.fetchAudio || typeof AudioContext === "undefined") return null;
+  try {
+    const wav = await opts.fetchAudio(text);
+    return await audioContext().decodeAudioData(await wav.arrayBuffer());
+  } catch {
+    return null; // offline voice unavailable: the browser voice speaks this one
+  }
+}
+
+async function pump(): Promise<void> {
+  pumping = true;
+  while (queue.length) {
+    const item = queue.shift() as QueueItem;
+    if (item.generation !== speakGeneration) {
+      item.done("none");
+      continue;
+    }
+    const buffer = item.audio ? await item.audio : null;
+    if (item.generation !== speakGeneration) {
+      item.done("none");
+      continue;
+    }
+    if (buffer && (await resumeQuick(audioContext()))) {
+      await playBuffer(buffer, item.opts);
+      item.done(item.generation === speakGeneration ? "local" : "none");
+    } else if (ttsSupported()) {
+      await speakBrowser(item.text, item.opts.onStart);
+      item.done("browser");
+    } else {
+      item.done("none");
+    }
+  }
+  pumping = false;
+  drainWaiters.splice(0).forEach((resolve) => resolve());
+}
+
+/** Queue one piece of speech (a sentence or two). Returns when that piece has been spoken or dropped. */
+export function enqueueSpeech(text: string, opts: SpeakOptions): Promise<TtsEngine | "none"> {
+  const clean = text.trim();
+  if (!clean) return Promise.resolve("none");
+  return new Promise((done) => {
+    const audio = opts.engine === "local" ? synthesize(clean, opts) : null;
+    queue.push({ text: clean, opts, generation: speakGeneration, audio, done });
+    if (!pumping) void pump();
+  });
+}
+
+/** Resolves once everything queued so far has been spoken (or stopped). */
+export function speechDrained(): Promise<void> {
+  return pumping || queue.length ? new Promise((resolve) => drainWaiters.push(resolve)) : Promise.resolve();
+}
+
+export function isSpeaking(): boolean {
+  return pumping || queue.length > 0;
+}
+
+/** Split text into speakable chunks of a sentence or more (very short sentences are grouped). */
+export function speechChunks(text: string, minChars = 60): string[] {
+  const sentences = text.split(/(?<=[.!?])\s+/).map((x) => x.trim()).filter(Boolean);
+  const chunks: string[] = [];
+  for (const sentence of sentences) {
+    const last = chunks[chunks.length - 1];
+    if (last !== undefined && last.length < minChars) chunks[chunks.length - 1] = `${last} ${sentence}`;
+    else chunks.push(sentence);
+  }
+  return chunks;
 }
 
 /**
@@ -306,23 +432,14 @@ export async function speak(text: string, opts: SpeakOptions): Promise<TtsEngine
   const clean = text.trim();
   if (!clean) return "none";
   stopSpeaking();
-  const generation = ++speakGeneration;
-  if (opts.engine === "local" && typeof AudioContext !== "undefined") {
-    try {
-      const outcome = await speakLocal(clean, opts, generation);
-      return outcome === "played" ? "local" : "none";
-    } catch {
-      if (generation !== speakGeneration) return "none";
-      // Offline voice unavailable or audio failed: fall back to the browser's voice.
-    }
-  }
-  if (!ttsSupported()) return "none";
-  await speakBrowser(clean, opts.onStart);
-  return "browser";
+  const parts = speechChunks(clean);
+  const results = await Promise.all((parts.length ? parts : [clean]).map((part) => enqueueSpeech(part, opts)));
+  return results.filter((r) => r !== "none").pop() ?? "none";
 }
 
 export function stopSpeaking(): void {
   speakGeneration++;
+  queue.splice(0).forEach((item) => item.done("none"));
   if (currentSource) {
     try {
       currentSource.stop();

@@ -13,6 +13,15 @@ export interface AssistantSettings {
   tts: TtsPreference;
   /** Listen in the background for "Jarvis, are you up?" (needs offline speech recognition). */
   wake: boolean;
+  /** Show and speak the briefing (schedule + tech news) when the laptop wakes up or the screen is unlocked. */
+  briefing: boolean;
+}
+
+export interface BriefingView {
+  reply: string;
+  speech: string;
+  at: number;
+  reason: "wake" | "unlock" | "start" | "request";
 }
 
 export interface AssistantApi {
@@ -27,6 +36,12 @@ export interface AssistantApi {
   /** The wake listener currently has the microphone open. */
   wakeListening: boolean;
   wakeError: string | null;
+  /** The browser is holding the microphone and speaker back until the page is clicked once. */
+  audioLocked: boolean;
+  /** The most recent briefing, for the dashboard. */
+  briefing: BriefingView | null;
+  /** Fetch, show and speak a fresh briefing now. */
+  requestBriefing: () => Promise<void>;
   /** Speak arbitrary text with the current voice settings (e.g. boot greeting). */
   say: (text: string) => Promise<void>;
   submit: (text: string, opts?: { fromVoice?: boolean; listenAfter?: boolean }) => Promise<void>;

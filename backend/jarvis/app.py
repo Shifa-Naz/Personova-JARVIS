@@ -31,14 +31,16 @@ from flask_cors import CORS
 from jarvis import __version__
 from jarvis.actions import build_registry
 from jarvis.actions.base import ActionError
-from jarvis.actions.system import telemetry
+from jarvis.actions.system import telemetry, top_processes
 from jarvis.ai.provider import AiProvider, build_provider
+from jarvis.briefing import build_briefing
 from jarvis.config import Settings
 from jarvis.core.context import Connectivity, ExecContext
 from jarvis.core.intent import IntentMatcher
 from jarvis.core.pipeline import Pipeline
 from jarvis.files.search import FileSearchService
 from jarvis.logging_setup import recent_events
+from jarvis.news import NewsService
 from jarvis.platform import get_platform_adapter, platform_name
 from jarvis.platform.apps import AppRegistry
 from jarvis.platform.base import PlatformAdapter
@@ -46,6 +48,7 @@ from jarvis.storage.store import JsonStore, new_id
 from jarvis.vision.ocr import OcrEngine
 from jarvis.voice.stt import Transcriber
 from jarvis.voice.tts import Synthesizer
+from jarvis.wake_watch import EventBus
 
 log = logging.getLogger("jarvis.api")
 
@@ -71,6 +74,8 @@ class Services:
     synthesizer: Synthesizer
     ocr: OcrEngine
     store: JsonStore
+    news: NewsService
+    events: EventBus
 
 
 def build_services(
@@ -84,6 +89,7 @@ def build_services(
     transcriber: Transcriber | None = None,
     ocr: OcrEngine | None = None,
     store: JsonStore | None = None,
+    news: NewsService | None = None,
 ) -> Services:
     apps = AppRegistry(settings.app_overrides)
     platform = platform or get_platform_adapter()
@@ -92,9 +98,11 @@ def build_services(
     connectivity = connectivity or Connectivity()
     ocr = ocr or OcrEngine(settings.tesseract_cmd)
     store = store or JsonStore(settings.data_dir / "data")
+    news = news or (NewsService(settings.news_feeds) if settings.news_feeds else NewsService())
     pipeline = Pipeline(
         ocr=ocr,
         store=store,
+        news=news,
         settings=settings,
         registry=build_registry(),
         matcher=IntentMatcher(apps),
@@ -108,7 +116,9 @@ def build_services(
         settings.stt_model, settings.stt_device, settings.stt_compute_type, str(settings.models_dir)
     )
     synthesizer = synthesizer or Synthesizer(settings.tts_voice, settings.voices_dir, settings.tts_rate)
-    return Services(settings, pipeline, files, ai, platform, connectivity, transcriber, synthesizer, ocr, store)
+    return Services(
+        settings, pipeline, files, ai, platform, connectivity, transcriber, synthesizer, ocr, store, news, EventBus()
+    )
 
 
 def _automation_available(platform: PlatformAdapter) -> bool:
@@ -195,9 +205,8 @@ def create_app(services: Services) -> Flask:
     def status():
         return jsonify({"platform": platform_name(), "capabilities": capabilities()})
 
-    @app.get("/api/v1/system")
-    def system():
-        ctx = ExecContext(
+    def plain_context() -> ExecContext:
+        return ExecContext(
             settings,
             services.platform,
             services.pipeline.apps,
@@ -206,7 +215,49 @@ def create_app(services: Services) -> Flask:
             services.connectivity,
             services.pipeline.sessions.get("default"),
         )
-        return jsonify(telemetry(ctx))
+
+    @app.get("/api/v1/system")
+    def system():
+        snapshot = telemetry(plain_context())
+        if request.args.get("processes") == "1":
+            snapshot["processes"] = top_processes(5)
+        return jsonify(snapshot)
+
+    @app.get("/api/v1/briefing")
+    def briefing_now():
+        ctx = plain_context()
+        b = build_briefing(services.store, services.news, telemetry(ctx), services.connectivity.online())
+        return jsonify(b)
+
+    @app.get("/api/v1/news")
+    def news():
+        count = max(1, min(10, request.args.get("count", default=5, type=int) or 5))
+        if not services.connectivity.online():
+            cached = services.news.cached()[:count]
+            return jsonify({"items": [h.as_dict() for h in cached], "offline": True})
+        try:
+            return jsonify({"items": [h.as_dict() for h in services.news.headlines(count)], "offline": False})
+        except ActionError as exc:
+            return error(exc.code, exc.message, 503)
+
+    @app.post("/api/v1/events/briefing")
+    def push_briefing():
+        """Build a briefing and push it to every open JARVIS window (what a wake-up does)."""
+        reason = str(body().get("reason", "wake"))
+        if reason not in ("wake", "unlock", "start"):
+            return error("INVALID_PARAMS", "reason must be wake, unlock or start.", 400)
+        ctx = plain_context()
+        b = build_briefing(services.store, services.news, telemetry(ctx), services.connectivity.online())
+        event = services.events.publish({"type": "briefing", "reason": reason, **b})
+        return jsonify({"seq": event["seq"]})
+
+    @app.get("/api/v1/events")
+    def events_poll():
+        """Long-poll: returns events after `after` (waits up to `wait` s). `after=-1` returns recent ones at once."""
+        after = request.args.get("after", default=-1, type=int)
+        wait = max(0.0, min(30.0, request.args.get("wait", default=25.0, type=float)))
+        found = services.events.wait(after if after is not None else -1, wait)
+        return jsonify({"seq": services.events.seq, "events": found})
 
     @app.post("/api/v1/plan")
     def plan():
@@ -222,7 +273,8 @@ def create_app(services: Services) -> Flask:
     def execute_stream():
         """Like /execute, but streams answer text as it is generated (Server-Sent Events).
 
-        Events: {"type": "delta", "text": "..."} while the model writes, then {"type": "done", "response": {...}}.
+        Events: {"type": "delta", "text": "..."} while the model writes, {"type": "say", "text": "..."} for each
+        finished sentence of the spoken version (so the voice can start early), then {"type": "done", ...}.
         """
         data = body()
         plan_id, sid = str(data.get("plan_id", "")), session_id(data)
@@ -230,7 +282,12 @@ def create_app(services: Services) -> Flask:
 
         def work() -> None:
             try:
-                resp = services.pipeline.execute(plan_id, sid, on_delta=lambda t: events.put(("delta", t)))
+                resp = services.pipeline.execute(
+                    plan_id,
+                    sid,
+                    on_delta=lambda t: events.put(("delta", t)),
+                    on_say=lambda t: events.put(("say", t)),
+                )
                 events.put(("done", resp.model_dump()))
             except Exception:  # noqa: BLE001 - report instead of leaving the client hanging
                 log.exception("Streaming execute failed")
@@ -255,8 +312,8 @@ def create_app(services: Services) -> Flask:
         def generate():
             while True:
                 kind, payload = events.get()
-                if kind == "delta":
-                    yield f"data: {json.dumps({'type': 'delta', 'text': payload})}\n\n"
+                if kind in ("delta", "say"):
+                    yield f"data: {json.dumps({'type': kind, 'text': payload})}\n\n"
                 else:
                     yield f"data: {json.dumps({'type': 'done', 'response': payload})}\n\n"
                     return

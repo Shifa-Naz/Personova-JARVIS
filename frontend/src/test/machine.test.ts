@@ -110,3 +110,28 @@ describe("assistant state machine", () => {
     expect(assistantReducer(s, { type: "LISTEN_END" }).phase).toBe("IDLE");
   });
 });
+
+describe("live speech", () => {
+  it("keeps speaking when the final result arrives mid-sentence", () => {
+    let s = assistantReducer({ ...initialState, connected: true, phase: "IDLE" }, { type: "UTTERANCE", text: "what is polymorphism" });
+    s = assistantReducer(s, { type: "SPEAK_START" });
+    s = assistantReducer(s, {
+      type: "RESULT",
+      response: {
+        request_id: "r",
+        status: "done",
+        intent: "QUESTION",
+        reply: "Polymorphism means many forms.",
+        results: [],
+        confirmation: null,
+        error_code: null,
+        success: true,
+        response_type: "conversation",
+        speech: "",
+        spoken_live: true,
+      },
+    });
+    expect(s.phase).toBe("SPEAKING");
+    expect(assistantReducer(s, { type: "SPEAK_END" }).phase).toBe("IDLE");
+  });
+});
